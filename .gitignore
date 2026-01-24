@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+**/build/
+gradle-*/
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Optional local caches
+**/.kotlin/
+
