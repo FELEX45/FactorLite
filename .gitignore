@@ -17,3 +17,8 @@ Desktop.ini
 # Optional local caches
 **/.kotlin/
 
+# Local tools (never commit binaries/zips)
+tools/
+
+# Local tools (never commit binaries/zips)
+tools/
