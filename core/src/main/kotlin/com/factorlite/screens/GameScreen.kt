@@ -1074,6 +1074,9 @@ class GameScreen : ScreenAdapter() {
         val ttf = when {
             Gdx.files.internal("fonts/Roboto-Regular.ttf").exists() -> Gdx.files.internal("fonts/Roboto-Regular.ttf")
             Gdx.files.absolute("C:/Windows/Fonts/arial.ttf").exists() -> Gdx.files.absolute("C:/Windows/Fonts/arial.ttf")
+            // Android fallback: системный Roboto обычно есть, чтобы кириллица работала без ассетов.
+            Gdx.files.absolute("/system/fonts/Roboto-Regular.ttf").exists() -> Gdx.files.absolute("/system/fonts/Roboto-Regular.ttf")
+            Gdx.files.absolute("/system/fonts/Roboto.ttf").exists() -> Gdx.files.absolute("/system/fonts/Roboto.ttf")
             else -> null
         }
 
