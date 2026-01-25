@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":core"))
     implementation("com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion")
     runtimeOnly("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop")
+    runtimeOnly("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-desktop")
 }
 
 kotlin {
