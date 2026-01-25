@@ -4,10 +4,15 @@ import com.badlogic.gdx.math.Vector2
 import kotlin.math.max
 
 class TargetingSystem(
-    private val range: Float = 520f,
+    range: Float = 520f,
     private val retargetInterval: Float = 0.12f,
     private val hysteresisMul: Float = 0.8f, // переключаемся только если новая цель заметно ближе
 ) {
+    var range: Float = range
+        set(value) {
+            field = value.coerceAtLeast(60f)
+        }
+
     var target: Enemy? = null
         private set
 

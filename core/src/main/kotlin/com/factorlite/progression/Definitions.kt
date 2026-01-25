@@ -21,6 +21,21 @@ enum class PassiveKind {
     MAGNET,
 }
 
+enum class UpgradeRarity(val weight: Float, val steps: Int) {
+    COMMON(weight = 0.72f, steps = 1),
+    RARE(weight = 0.23f, steps = 2),
+    EPIC(weight = 0.045f, steps = 4),
+    LEGENDARY(weight = 0.005f, steps = 7),
+}
+
+val UpgradeRarity.label: String
+    get() = when (this) {
+        UpgradeRarity.COMMON -> "Common"
+        UpgradeRarity.RARE -> "Rare"
+        UpgradeRarity.EPIC -> "Epic"
+        UpgradeRarity.LEGENDARY -> "Legendary"
+    }
+
 data class WeaponInstance(
     val kind: WeaponKind,
     var level: Int = 1,
@@ -28,6 +43,12 @@ data class WeaponInstance(
     var extraLevel: Int = 0,
     var ricochetLevel: Int = 0,
     var pierceLevel: Int = 0,
+    // Паттерн-апгрейды (то, что игрок реально выбирает на карточках)
+    var damageLevel: Int = 0,
+    var cooldownLevel: Int = 0,
+    var projectileSpeedLevel: Int = 0,
+    var accuracyLevel: Int = 0,
+    var rangeLevel: Int = 0,
 )
 
 data class PassiveInstance(
@@ -38,6 +59,8 @@ data class PassiveInstance(
 sealed class UpgradeOption {
     abstract val title: String
     abstract val description: String
+    open val rarity: UpgradeRarity? = null
+    open val levelLabel: String? = null
 
     data class AddWeapon(val weaponKind: WeaponKind) : UpgradeOption() {
         override val title: String = "Оружие: ${weaponKind.uiName}"
@@ -46,7 +69,58 @@ sealed class UpgradeOption {
 
     data class UpgradeWeapon(val weaponKind: WeaponKind) : UpgradeOption() {
         override val title: String = "Улучшить: ${weaponKind.uiName}"
-        override val description: String = "Повышает уровень оружия."
+        override val description: String =
+            when (weaponKind) {
+                WeaponKind.BLASTER -> "Усиливает урон и чуть ускоряет стрельбу."
+                WeaponKind.REVOLVER -> "Усиливает урон и чуть ускоряет стрельбу."
+                WeaponKind.SWORD -> "Усиливает урон и чуть ускоряет взмах."
+            }
+    }
+
+    enum class WeaponUpgradeKind {
+        DAMAGE,
+        FIRE_RATE,
+        PROJECTILE_SPEED,
+        ACCURACY,
+        RANGE,
+    }
+
+    /**
+     * Конкретные карточки апгрейдов паттерна (вместо абстрактного "уровня").
+     */
+    data class WeaponUpgrade(
+        val weaponKind: WeaponKind,
+        val upgrade: WeaponUpgradeKind,
+        override val rarity: UpgradeRarity,
+        val steps: Int,
+        override val levelLabel: String,
+        private val statLine: String,
+    ) : UpgradeOption() {
+        override val title: String = when (weaponKind) {
+            WeaponKind.BLASTER -> when (upgrade) {
+                WeaponUpgradeKind.DAMAGE -> "Бластер"
+                WeaponUpgradeKind.FIRE_RATE -> "Бластер"
+                WeaponUpgradeKind.PROJECTILE_SPEED -> "Бластер"
+                WeaponUpgradeKind.ACCURACY -> "Бластер"
+                WeaponUpgradeKind.RANGE -> "Бластер"
+            }
+            WeaponKind.REVOLVER -> when (upgrade) {
+                WeaponUpgradeKind.DAMAGE -> "Револьвер"
+                WeaponUpgradeKind.FIRE_RATE -> "Револьвер"
+                WeaponUpgradeKind.PROJECTILE_SPEED -> "Револьвер"
+                WeaponUpgradeKind.ACCURACY -> "Револьвер"
+                WeaponUpgradeKind.RANGE -> "Револьвер"
+            }
+            WeaponKind.SWORD -> when (upgrade) {
+                WeaponUpgradeKind.DAMAGE -> "Меч"
+                WeaponUpgradeKind.FIRE_RATE -> "Меч"
+                WeaponUpgradeKind.RANGE -> "Меч"
+                WeaponUpgradeKind.PROJECTILE_SPEED -> "Меч"
+                WeaponUpgradeKind.ACCURACY -> "Меч"
+            }
+        }
+
+        override val description: String = statLine
     }
 
     data class AddPassive(val passiveKind: PassiveKind) : UpgradeOption() {
@@ -54,26 +128,26 @@ sealed class UpgradeOption {
         override val description: String = "Добавить новую пассивку."
     }
 
-    data class UpgradePassive(val passiveKind: PassiveKind) : UpgradeOption() {
-        override val title: String = "Улучшить: ${passiveKind.uiName}"
-        override val description: String = "Повышает уровень пассивки."
+    data class UpgradePassive(
+        val passiveKind: PassiveKind,
+        override val rarity: UpgradeRarity,
+        val steps: Int,
+        override val levelLabel: String,
+        private val statLine: String,
+    ) : UpgradeOption() {
+        override val title: String = passiveKind.uiName
+        override val description: String = statLine
     }
 
-    data class WeaponMod(val weaponKind: WeaponKind, val mod: WeaponModKind) : UpgradeOption() {
-        override val title: String = "${weaponKind.uiName}: ${mod.uiName}"
-        override val description: String =
-            when (weaponKind) {
-                WeaponKind.SWORD -> when (mod) {
-                    WeaponModKind.EXTRA -> "+1 дополнительная цель (удар по нескольким)."
-                    WeaponModKind.RICOCHET -> "Цепной удар по ещё одной цели."
-                    WeaponModKind.PIERCE -> "+дальность удара."
-                }
-                else -> when (mod) {
-                    WeaponModKind.EXTRA -> "+1 снаряд за атаку."
-                    WeaponModKind.RICOCHET -> "+1 рикошет по цели."
-                    WeaponModKind.PIERCE -> "+1 пробивание цели."
-                }
-            }
+    data class WeaponMod(
+        val weaponKind: WeaponKind,
+        val mod: WeaponModKind,
+        override val rarity: UpgradeRarity,
+        override val levelLabel: String,
+        private val statLine: String,
+    ) : UpgradeOption() {
+        override val title: String = weaponKind.uiName
+        override val description: String = statLine
     }
 }
 

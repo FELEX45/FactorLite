@@ -54,6 +54,11 @@ class LootSystem {
 
     private var nextChestCost: Int = 20
     private var chestSpawnTimer = 0f
+    private var spawnedRegularChests: Int = 0
+
+    // Баланс "катки": обычные сундуки ограничиваем, чтобы карта не зарастала.
+    var maxRegularChestsPerRun: Int = 24
+    var maxChestsOnMap: Int = 8
 
     fun reset() {
         chests.clear()
@@ -62,6 +67,7 @@ class LootSystem {
         gold = 0
         nextChestCost = 20
         chestSpawnTimer = 3f
+        spawnedRegularChests = 0
     }
 
     fun onEnemyKilled(pos: Vector2, xpReward: Int, goldReward: Int, isElite: Boolean) {
@@ -76,23 +82,27 @@ class LootSystem {
             )
         }
 
-        xpOrbs.add(
-            XpOrb(
-                pos = Vector2(pos.x, pos.y),
-                value = xpReward,
-                vel = Vector2(MathUtils.random(-24f, 24f), MathUtils.random(-24f, 24f)),
-                ttl = 90f,
-            ),
-        )
+        if (xpReward > 0) {
+            xpOrbs.add(
+                XpOrb(
+                    pos = Vector2(pos.x, pos.y),
+                    value = xpReward,
+                    vel = Vector2(MathUtils.random(-24f, 24f), MathUtils.random(-24f, 24f)),
+                    ttl = 90f,
+                ),
+            )
+        }
 
-        goldOrbs.add(
-            GoldOrb(
-                pos = Vector2(pos.x, pos.y),
-                value = goldReward,
-                vel = Vector2(MathUtils.random(-28f, 28f), MathUtils.random(-28f, 28f)),
-                ttl = 90f,
-            ),
-        )
+        if (goldReward > 0) {
+            goldOrbs.add(
+                GoldOrb(
+                    pos = Vector2(pos.x, pos.y),
+                    value = goldReward,
+                    vel = Vector2(MathUtils.random(-28f, 28f), MathUtils.random(-28f, 28f)),
+                    ttl = 90f,
+                ),
+            )
+        }
     }
 
     fun updateChestSpawns(
@@ -101,9 +111,16 @@ class LootSystem {
         arenaHalfH: Float,
         playerPos: Vector2,
     ) {
+        // Кап по количеству обычных сундуков "на катку"
+        if (spawnedRegularChests >= maxRegularChestsPerRun) return
+
+        // Софт-кап по количеству сундуков на карте (не считаем элитные как "мусор", но они тоже занимают место)
+        if (chests.size >= maxChestsOnMap) return
+
         chestSpawnTimer -= delta
         if (chestSpawnTimer > 0f) return
-        chestSpawnTimer = 9f
+        // В 5-минутной катке при интервале ~14s получится ~20-22 сундука.
+        chestSpawnTimer = 14f
 
         // Спавним сундук в пределах арены, но не слишком близко к игроку
         val tries = 20
@@ -114,6 +131,7 @@ class LootSystem {
             val dy = y - playerPos.y
             if (dx * dx + dy * dy < 220f * 220f) continue
             chests.add(Chest(Vector2(x, y), cost = nextChestCost))
+            spawnedRegularChests += 1
             break
         }
     }

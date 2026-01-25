@@ -12,6 +12,7 @@ enum class EnemyKind {
 data class Enemy(
     val pos: Vector2,
     var hp: Float,
+    val maxHp: Float = hp,
     val speed: Float,
     val contactDamage: Float,
     val radius: Float = 14f,
@@ -19,6 +20,7 @@ data class Enemy(
     val goldReward: Int = 1,
     val kind: EnemyKind = EnemyKind.NORMAL,
     val isElite: Boolean = false,
+    val isBoss: Boolean = false,
     var shootCooldown: Float = 0f,
 )
 
