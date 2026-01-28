@@ -10,6 +10,13 @@ android {
     namespace = "com.factorlite.android"
     compileSdk = 34
 
+    sourceSets {
+        getByName("main") {
+            // Shared assets folder at repo root (used by both Desktop and Android)
+            assets.srcDir(file("../assets"))
+        }
+    }
+
     defaultConfig {
         applicationId = "com.factorlite.android"
         minSdk = 21

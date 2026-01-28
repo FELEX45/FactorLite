@@ -1068,19 +1068,16 @@ class GameScreen : ScreenAdapter() {
         // Для релиза можно сделать кэширование и обновлять реже.
         font.dispose()
 
-        // 1) Предпочтительно положить TTF в проект (например, в будущую папку assets/fonts)
-        // и грузить через Gdx.files.internal("fonts/Roboto-Regular.ttf").
-        // 2) На Windows для разработки можно fallback на системный Arial.
-        val ttf = when {
-            Gdx.files.internal("fonts/Roboto-Regular.ttf").exists() -> Gdx.files.internal("fonts/Roboto-Regular.ttf")
-            Gdx.files.absolute("C:/Windows/Fonts/arial.ttf").exists() -> Gdx.files.absolute("C:/Windows/Fonts/arial.ttf")
-            // Android fallback: системный Roboto обычно есть, чтобы кириллица работала без ассетов.
-            Gdx.files.absolute("/system/fonts/Roboto-Regular.ttf").exists() -> Gdx.files.absolute("/system/fonts/Roboto-Regular.ttf")
-            Gdx.files.absolute("/system/fonts/Roboto.ttf").exists() -> Gdx.files.absolute("/system/fonts/Roboto.ttf")
-            else -> null
-        }
-
-        if (ttf == null) {
+        // Продуктовый подход: не зависим от системных путей (Windows/Android),
+        // всегда грузим из ассетов. Общая папка `assets/` подключена в Gradle
+        // для Desktop и Android, так что Gdx.files.internal(...) работает везде одинаково.
+        val ttf = Gdx.files.internal("fonts/Roboto-Regular.ttf")
+        if (!ttf.exists()) {
+            Gdx.app?.error(
+                "Font",
+                "Missing assets font: fonts/Roboto-Regular.ttf. " +
+                    "Add it under repo root assets/fonts/Roboto-Regular.ttf. Falling back to BitmapFont().",
+            )
             // Фоллбек: будет без кириллицы, но хотя бы не упадём.
             font = BitmapFont()
             return

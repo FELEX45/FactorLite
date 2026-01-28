@@ -13,6 +13,13 @@ application {
     mainClass.set("com.factorlite.lwjgl3.Lwjgl3LauncherKt")
 }
 
+sourceSets {
+    named("main") {
+        // Shared assets folder at repo root (used by both Desktop and Android)
+        resources.srcDir(file("../assets"))
+    }
+}
+
 dependencies {
     val gdxVersion: String by project
 
