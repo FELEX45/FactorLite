@@ -101,6 +101,8 @@ class ItemTriggerSystem {
      */
     fun <E> applyToxicDamage(
         delta: Float,
+        damageMul: Float,
+        radiusMul: Float,
         playerPos: Vector2,
         enemies: Iterable<E>,
         isAlive: (E) -> Boolean,
@@ -108,10 +110,10 @@ class ItemTriggerSystem {
         damageEnemy: (E, Float) -> Unit,
     ) {
         if (!toxicActive()) return
-        val radius = toxicRadius()
+        val radius = toxicRadius() * radiusMul.coerceIn(0.4f, 3.0f)
         val r2 = radius * radius
         val dps = toxicDps()
-        val dmg = dps * delta
+        val dmg = dps * delta * damageMul.coerceIn(0.2f, 3.0f)
 
         for (e in enemies) {
             if (!isAlive(e)) continue

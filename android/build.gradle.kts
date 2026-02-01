@@ -6,6 +6,10 @@ plugins {
 val factorliteVersion: String by project
 val factorliteVersionCode: String by project
 
+// LibGDX Android requires native .so libs to be packaged into APK.
+// We keep them in a separate configuration and copy into src/main/jniLibs per ABI.
+val natives by configurations.creating
+
 android {
     namespace = "com.factorlite.android"
     compileSdk = 34
@@ -55,6 +59,40 @@ android {
     }
 }
 
+tasks.register("copyAndroidNatives") {
+    group = "build"
+    description = "Extract LibGDX native .so libs into android/src/main/jniLibs/<abi>/ so they are packaged into the APK."
+
+    doLast {
+        val abiMap = mapOf(
+            "natives-armeabi-v7a" to "armeabi-v7a",
+            "natives-arm64-v8a" to "arm64-v8a",
+            "natives-x86" to "x86",
+            "natives-x86_64" to "x86_64",
+        )
+
+        val outRoot = file("src/main/jniLibs")
+        // Clean old natives to avoid stale ABI mix.
+        if (outRoot.exists()) outRoot.deleteRecursively()
+        outRoot.mkdirs()
+
+        val files = natives.files.toList()
+        for (f in files) {
+            val abi = abiMap.entries.firstOrNull { f.name.contains(it.key) }?.value ?: continue
+            copy {
+                from(zipTree(f))
+                include("*.so")
+                into(File(outRoot, abi))
+            }
+        }
+    }
+}
+
+// Ensure natives are present for all builds.
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn("copyAndroidNatives")
+}
+
 tasks.register<Copy>("copyDebugApk") {
     group = "build"
     description = "Copy debug APK to a versioned filename (factorlite_v.<version>.apk)."
@@ -79,15 +117,15 @@ dependencies {
     implementation(project(":core"))
 
     implementation("com.badlogicgames.gdx:gdx-backend-android:$gdxVersion")
-    implementation("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-armeabi-v7a")
-    implementation("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-arm64-v8a")
-    implementation("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-x86")
-    implementation("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-x86_64")
+    natives("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-armeabi-v7a")
+    natives("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-arm64-v8a")
+    natives("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-x86")
+    natives("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-x86_64")
 
     implementation("com.badlogicgames.gdx:gdx-freetype:$gdxVersion")
-    implementation("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-armeabi-v7a")
-    implementation("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-arm64-v8a")
-    implementation("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-x86")
-    implementation("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-x86_64")
+    natives("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-armeabi-v7a")
+    natives("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-arm64-v8a")
+    natives("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-x86")
+    natives("com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-x86_64")
 }
 

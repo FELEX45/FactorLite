@@ -1,9 +1,13 @@
 package com.factorlite.progression
 
 enum class WeaponKind {
-    BLASTER,
+    FROSTSTAFF,
+    FIRESTAFF,
     REVOLVER,
-    SWORD,
+    POISON_TRAP,
+    KATANA,
+    DAGGER,
+    POISON_AURA,
 }
 
 enum class WeaponModKind {
@@ -12,13 +16,16 @@ enum class WeaponModKind {
     PIERCE,    // пробивание / дальность (для меча)
 }
 
-enum class PassiveKind {
-    DAMAGE,
-    FIRE_RATE,
-    MOVE_SPEED,
-    CRIT_CHANCE,
-    CRIT_DAMAGE,
-    MAGNET,
+enum class RingKind {
+    SPEED,         // +% скорость передвижения
+    WIND,          // +% шанс уклонения
+    VAMPIRE,       // +% лайфстил (от нанесённого урона)
+    LUCKY,         // +% шанс крита (крит-урон базово x2)
+    VITALITY,      // +% max HP
+    DAMAGE,        // +% урон
+    QUICK_HAND,    // +% скорость атаки
+    MAGNET,        // +% радиус подбора
+    MIND,          // +% получение опыта
 }
 
 enum class UpgradeRarity(val weight: Float, val steps: Int) {
@@ -51,8 +58,8 @@ data class WeaponInstance(
     var rangeLevel: Int = 0,
 )
 
-data class PassiveInstance(
-    val kind: PassiveKind,
+data class RingInstance(
+    val kind: RingKind,
     var level: Int = 1,
 )
 
@@ -69,12 +76,7 @@ sealed class UpgradeOption {
 
     data class UpgradeWeapon(val weaponKind: WeaponKind) : UpgradeOption() {
         override val title: String = "Улучшить: ${weaponKind.uiName}"
-        override val description: String =
-            when (weaponKind) {
-                WeaponKind.BLASTER -> "Усиливает урон и чуть ускоряет стрельбу."
-                WeaponKind.REVOLVER -> "Усиливает урон и чуть ускоряет стрельбу."
-                WeaponKind.SWORD -> "Усиливает урон и чуть ускоряет взмах."
-            }
+        override val description: String = "Усиливает оружие."
     }
 
     enum class WeaponUpgradeKind {
@@ -96,46 +98,24 @@ sealed class UpgradeOption {
         override val levelLabel: String,
         private val statLine: String,
     ) : UpgradeOption() {
-        override val title: String = when (weaponKind) {
-            WeaponKind.BLASTER -> when (upgrade) {
-                WeaponUpgradeKind.DAMAGE -> "Бластер"
-                WeaponUpgradeKind.FIRE_RATE -> "Бластер"
-                WeaponUpgradeKind.PROJECTILE_SPEED -> "Бластер"
-                WeaponUpgradeKind.ACCURACY -> "Бластер"
-                WeaponUpgradeKind.RANGE -> "Бластер"
-            }
-            WeaponKind.REVOLVER -> when (upgrade) {
-                WeaponUpgradeKind.DAMAGE -> "Револьвер"
-                WeaponUpgradeKind.FIRE_RATE -> "Револьвер"
-                WeaponUpgradeKind.PROJECTILE_SPEED -> "Револьвер"
-                WeaponUpgradeKind.ACCURACY -> "Револьвер"
-                WeaponUpgradeKind.RANGE -> "Револьвер"
-            }
-            WeaponKind.SWORD -> when (upgrade) {
-                WeaponUpgradeKind.DAMAGE -> "Меч"
-                WeaponUpgradeKind.FIRE_RATE -> "Меч"
-                WeaponUpgradeKind.RANGE -> "Меч"
-                WeaponUpgradeKind.PROJECTILE_SPEED -> "Меч"
-                WeaponUpgradeKind.ACCURACY -> "Меч"
-            }
-        }
+        override val title: String = weaponKind.uiName
 
         override val description: String = statLine
     }
 
-    data class AddPassive(val passiveKind: PassiveKind) : UpgradeOption() {
-        override val title: String = "Пассивка: ${passiveKind.uiName}"
-        override val description: String = "Добавить новую пассивку."
+    data class AddRing(val ringKind: RingKind) : UpgradeOption() {
+        override val title: String = "Кольцо: ${ringKind.uiName}"
+        override val description: String = "Добавить новое кольцо."
     }
 
-    data class UpgradePassive(
-        val passiveKind: PassiveKind,
+    data class UpgradeRing(
+        val ringKind: RingKind,
         override val rarity: UpgradeRarity,
         val steps: Int,
         override val levelLabel: String,
         private val statLine: String,
     ) : UpgradeOption() {
-        override val title: String = passiveKind.uiName
+        override val title: String = ringKind.uiName
         override val description: String = statLine
     }
 
@@ -153,19 +133,26 @@ sealed class UpgradeOption {
 
 val WeaponKind.uiName: String
     get() = when (this) {
-        WeaponKind.BLASTER -> "Бластер"
+        WeaponKind.FROSTSTAFF -> "Посох холода"
+        WeaponKind.FIRESTAFF -> "Посох огня"
         WeaponKind.REVOLVER -> "Револьвер"
-        WeaponKind.SWORD -> "Меч"
+        WeaponKind.POISON_TRAP -> "Ядовитая ловушка"
+        WeaponKind.KATANA -> "Катана"
+        WeaponKind.DAGGER -> "Кинжал"
+        WeaponKind.POISON_AURA -> "Облако яда"
     }
 
-val PassiveKind.uiName: String
+val RingKind.uiName: String
     get() = when (this) {
-        PassiveKind.DAMAGE -> "+Урон"
-        PassiveKind.FIRE_RATE -> "+Скорость атаки"
-        PassiveKind.MOVE_SPEED -> "+Скорость бега"
-        PassiveKind.CRIT_CHANCE -> "+Шанс крита"
-        PassiveKind.CRIT_DAMAGE -> "+Крит. урон"
-        PassiveKind.MAGNET -> "+Магнит"
+        RingKind.SPEED -> "Кольцо скорости"
+        RingKind.WIND -> "Кольцо ветра"
+        RingKind.VAMPIRE -> "Кольцо вампира"
+        RingKind.LUCKY -> "Кольцо везучести"
+        RingKind.VITALITY -> "Кольцо жизненной силы"
+        RingKind.DAMAGE -> "Кольцо урона"
+        RingKind.QUICK_HAND -> "Кольцо быстрой руки"
+        RingKind.MAGNET -> "Магнитное кольцо"
+        RingKind.MIND -> "Кольцо разума"
     }
 
 val WeaponModKind.uiName: String

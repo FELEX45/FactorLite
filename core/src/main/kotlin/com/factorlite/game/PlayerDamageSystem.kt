@@ -1,10 +1,11 @@
 package com.factorlite.game
 
+import com.badlogic.gdx.math.MathUtils
 import com.factorlite.loot.ItemTriggerSystem
 import kotlin.math.max
 
 class PlayerDamageSystem(
-    private val maxHp: Float = 100f,
+    private var maxHp: Float = 100f,
     private val invulnDurationSec: Float = 0.6f,
 ) {
     var hp: Float = maxHp
@@ -18,6 +19,12 @@ class PlayerDamageSystem(
         invuln = 0f
     }
 
+    fun setMaxHp(newMax: Float) {
+        val m = newMax.coerceAtLeast(1f)
+        maxHp = m
+        if (hp > maxHp) hp = maxHp
+    }
+
     fun update(delta: Float) {
         invuln = max(0f, invuln - delta)
     }
@@ -29,9 +36,17 @@ class PlayerDamageSystem(
         val died: Boolean,
     )
 
-    fun applyHit(damage: Float, itemSystem: ItemTriggerSystem): HitResult {
+    fun applyHit(damage: Float, itemSystem: ItemTriggerSystem, dodgeChance: Float): HitResult {
         if (damage <= 0f) return HitResult(blocked = false, died = false)
         if (!canTakeDamage()) return HitResult(blocked = true, died = false)
+
+        // Врождёнка/эффект: шанс уклонения (до предметов и до получения урона).
+        val dodge = dodgeChance.coerceIn(0f, 0.80f)
+        if (dodge > 0f && MathUtils.random() < dodge) {
+            // Небольшая неуязвимость, чтобы не словить мгновенно следующий хит.
+            invuln = invulnDurationSec * 0.60f
+            return HitResult(blocked = true, died = false)
+        }
 
         if (itemSystem.onPlayerHit().blocked) {
             return HitResult(blocked = true, died = false)

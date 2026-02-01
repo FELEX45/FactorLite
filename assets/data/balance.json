@@ -1,0 +1,211 @@
+{
+  "targeting": {
+    "baseRange": 520.0,
+    "rangePerLevel": 35.0
+  },
+  "weapons": {
+    "froststaff": {
+      "baseDamage": 8.0,
+      "damagePerLevel": 1.8,
+      "baseCooldownSec": 0.42,
+      "cooldownLevelFactor": 0.08,
+      "projectileSpeedBase": 720.0,
+      "projectileSpeedPerLevel": 28.0,
+      "spreadBaseRad": 0.10,
+      "accuracyPowBase": 0.90,
+      "targetAcquireRange": 520.0
+    },
+    "firestaff": {
+      "baseDamage": 6.0,
+      "damagePerLevel": 1.4,
+      "baseCooldownSec": 0.40,
+      "cooldownLevelFactor": 0.08,
+      "projectileSpeedBase": 720.0,
+      "projectileSpeedPerLevel": 28.0,
+      "spreadBaseRad": 0.10,
+      "accuracyPowBase": 0.90,
+      "targetAcquireRange": 520.0
+    },
+    "revolver": {
+      "baseDamage": 7.5,
+      "damagePerLevel": 1.6,
+      "baseCooldownSec": 0.65,
+      "cooldownLevelFactor": 0.08,
+      "projectileSpeedBase": 820.0,
+      "projectileSpeedPerLevel": 32.0,
+      "accuracyPowBase": 0.90,
+      "targetAcquireRange": 560.0
+    },
+    "poisonTrap": {
+      "baseDamage": 3.0,
+      "damagePerLevel": 1.0,
+      "baseCooldownSec": 1.10,
+      "cooldownLevelFactor": 0.08,
+      "projectileSpeedBase": 600.0,
+      "projectileSpeedPerLevel": 20.0,
+      "accuracyPowBase": 0.92,
+      "targetAcquireRange": 420.0
+    },
+    "katana": {
+      "baseDamage": 14.0,
+      "damagePerLevel": 2.0,
+      "baseCooldownSec": 0.55,
+      "cooldownLevelFactor": 0.08,
+      "swingRangeBase": 120.0,
+      "swingRangePerLevel": 10.0,
+      "pierceRangePerLevel": 18.0
+    },
+    "dagger": {
+      "baseDamage": 9.0,
+      "damagePerLevel": 1.4,
+      "baseCooldownSec": 0.28,
+      "cooldownLevelFactor": 0.08,
+      "swingRangeBase": 95.0,
+      "swingRangePerLevel": 8.0,
+      "pierceRangePerLevel": 14.0
+    },
+    "poisonAura": {
+      "baseDamage": 2.0,
+      "damagePerLevel": 0.6,
+      "baseCooldownSec": 0.10,
+      "cooldownLevelFactor": 0.08,
+      "swingRangeBase": 70.0,
+      "swingRangePerLevel": 10.0,
+      "pierceRangePerLevel": 0.0
+    }
+  },
+  "rings": {
+    "speedPerLevel": 0.06,
+    "dodgePerLevel": 0.02,
+    "dodgeChanceCap": 0.80,
+    "lifestealPerLevel": 0.005,
+    "lifestealCap": 0.08,
+    "critChancePerLevel": 0.02,
+    "critChanceCap": 0.85,
+    "maxHpPerLevel": 0.08,
+    "maxHpMulCap": 2.5,
+    "damagePerLevel": 0.12,
+    "quickHandPerLevel": 0.10,
+    "magnetBase": 140.0,
+    "magnetPerLevel": 0.22,
+    "xpGainPerLevel": 0.08,
+    "xpGainMulCap": 3.0
+  },
+  "progression": {
+    "xpToNextBase": 16.0,
+    "xpToNextPerLevel": 6.0,
+    "xpToNextPow": 1.35
+  },
+  "cards": {
+    "addWeaponWeight": 1.2,
+    "addRingWeight": 1.1,
+    "ringUpgradeWeight": 4.0,
+    "weapon": {
+      "damageWeight": 2.2, "damageCap": 10,
+      "fireRateWeight": 2.2, "fireRateCap": 10,
+      "projectileSpeedWeight": 1.6, "projectileSpeedCap": 8,
+      "accuracyWeight": 1.6, "accuracyCap": 8,
+      "rangeWeight": 1.4, "rangeCap": 10
+    },
+    "modExtraWeight": 3.2,
+    "modExtraCap": 2,
+    "modRicochetWeight": 2.8,
+    "modRicochetCap": 2,
+    "modPierceWeight": 2.8,
+    "modPierceCap": 2
+  },
+  "spawning": {
+    "spawnDirector": {
+      "initialDelay": 1.6,
+      "maxSpawnsPerFrame": 12,
+      "minInterval": 0.14,
+      "maxInterval": 1.60,
+      "rampSeconds": 210.0,
+      "rampPow": 1.45,
+      "startSoftSeconds": 65.0,
+      "startSoftMul": 2.20,
+      "endSpikeStartSec": 240.0,
+      "endSpikeRampSeconds": 35.0,
+      "endSpikeMul": 0.72,
+      "crowdDiv": 220.0,
+      "crowdMulCap": 2.8
+    },
+    "enemy": {
+      "spawnPad": 18.0,
+      "typeChances": {
+        "fastRampSeconds": 120.0,
+        "fastCap": 0.40,
+        "tankRampSeconds": 150.0,
+        "tankCap": 0.28,
+        "rangedRampSeconds": 240.0,
+        "rangedCap": 0.16
+      },
+      "difficulty": {
+        "timeMulBonusAtEnd": 0.70,
+        "speedDiffFactor": 0.15,
+        "rewardTimeFactor": 0.35
+      },
+      "base": {
+        "normal": { "hp": 40.0, "speed": 105.0, "contactDamage": 10.0, "radius": 15.0, "xp": 1, "gold": 1 },
+        "fast":   { "hp": 28.0, "speed": 150.0, "contactDamage":  8.0, "radius": 13.0, "xp": 2, "gold": 2 },
+        "tank":   { "hp": 70.0, "speed":  80.0, "contactDamage": 12.0, "radius": 18.0, "xp": 3, "gold": 3 },
+        "ranged": { "hp": 34.0, "speed":  92.0, "contactDamage":  8.0, "radius": 14.0, "xp": 2, "gold": 2, "shootCooldownMin": 0.2, "shootCooldownMax": 1.0 }
+      },
+      "rangedCombat": {
+        "desiredMinDist": 240.0,
+        "desiredMaxDist": 420.0,
+        "shootRange": 500.0,
+        "projectileSpeed": 360.0,
+        "projectileRadius": 5.0,
+        "baseDamage": 5.8,
+        "scaleDamageWithDifficulty": false,
+        "baseCooldownSec": 1.70,
+        "cooldownTimeRampSeconds": 200.0,
+        "cooldownMulCap": 1.4,
+        "eliteExtraShotChance": 0.07,
+        "eliteCooldownMul": 0.90
+      },
+      "elite": {
+        "pBaseStart": 0.006,
+        "pBaseRampAdd": 0.004,
+        "rampSeconds": 240.0,
+        "pBaseCap": 0.02,
+        "pFinalCap": 0.08,
+        "hpMul": 2.6,
+        "speedMul": 1.05,
+        "contactDamageMul": 1.35,
+        "radiusMul": 1.15,
+        "xpMul": 5,
+        "goldMul": 6,
+        "rangedShootCooldownMin": 0.25,
+        "rangedShootCooldownMax": 0.9
+      },
+      "boss": {
+        "spawnOffsetX": 360.0,
+        "hp": 5200.0,
+        "speed": 78.0,
+        "contactDamage": 22.0,
+        "radius": 26.0,
+        "cleanupChestsKeepEliteOnly": true
+      }
+    }
+  },
+  "combat": {
+    "projectiles": {
+      "playerArenaMargin": 50.0,
+      "enemyArenaMargin": 80.0,
+      "ricochetMaxAcquireRange": 700.0,
+      "ricochetMinSpeed": 500.0
+    }
+  },
+  "shrines": {
+    "maxOnMap": 2,
+    "firstSpawnAt": 35.0,
+    "nextIntervalMin": 55.0,
+    "nextIntervalMax": 85.0,
+    "spawnDistMin": 260.0,
+    "spawnDistMax": 420.0,
+    "edgeMargin": 70.0
+  }
+}
+

@@ -16,6 +16,14 @@ enum class ItemKind {
     SHIELD_CHARM,    // щит раз в N секунд
 }
 
+val ItemKind.uiName: String
+    get() = when (this) {
+        ItemKind.BURGER_DROP -> "Боргар"
+        ItemKind.LIGHTNING_ORB -> "Сфера молнии"
+        ItemKind.TOXIC_BARREL -> "Бочка с токсинами"
+        ItemKind.SHIELD_CHARM -> "Оберег щита"
+    }
+
 data class ItemInstance(
     val kind: ItemKind,
     val rarity: Rarity,

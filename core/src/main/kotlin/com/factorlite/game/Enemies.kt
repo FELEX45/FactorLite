@@ -22,5 +22,16 @@ data class Enemy(
     val isElite: Boolean = false,
     val isBoss: Boolean = false,
     var shootCooldown: Float = 0f,
+    // --- Status effects (минимальная система) ---
+    var slowMul: Float = 1f,
+    var slowTimer: Float = 0f,
+
+    var burnStacks: Int = 0,
+    var burnTimer: Float = 0f,
+    var burnDpsPerStack: Float = 0f,
+
+    var bleedStacks: Int = 0,
+    var bleedTimer: Float = 0f,
+    var bleedDpsPerStack: Float = 0f,
 )
 

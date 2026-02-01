@@ -3,8 +3,6 @@ package com.factorlite.game
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Vector2
 import com.factorlite.loot.ItemInstance
-import com.factorlite.loot.ItemOption
-import com.factorlite.loot.makeItemOption
 import com.factorlite.loot.rollItemKind
 import com.factorlite.loot.rollRarityByChestCost
 import com.factorlite.progression.RunProgression
@@ -42,7 +40,7 @@ class LootSystem {
     )
 
     data class OpenChestResult(
-        val choices: List<ItemOption>,
+        val item: ItemInstance,
     )
 
     val chests: MutableList<Chest> = ArrayList()
@@ -152,11 +150,12 @@ class LootSystem {
             gold -= c.cost
             it.remove()
 
-            val choices = rollChestChoices(c.rarityCost)
+            // Теперь сундук сразу выдаёт 1 рандомный предмет (без выбора).
+            val item = rollChestItem(c.rarityCost)
 
             // Следующая стоимость (только для “обычных” сундуков)
             if (!c.isElite) nextChestCost = (nextChestCost * 2).coerceAtMost(99999)
-            return OpenChestResult(choices)
+            return OpenChestResult(item)
         }
         return null
     }
@@ -166,7 +165,7 @@ class LootSystem {
         // Этот метод оставлен как точка расширения (например, статистика/ачивки).
     }
 
-    fun updateXpOrbs(delta: Float, playerPos: Vector2, progression: RunProgression): Boolean {
+    fun updateXpOrbs(delta: Float, playerPos: Vector2, progression: RunProgression, xpMul: Float = 1f): Boolean {
         if (xpOrbs.isEmpty()) return false
 
         val magnetRadius = progression.getMagnetRadiusPx()
@@ -190,7 +189,8 @@ class LootSystem {
             val d2 = dx * dx + dy * dy
 
             if (d2 <= pickupR2) {
-                if (progression.addXp(o.value)) leveledUp = true
+                val v = (o.value * xpMul).toInt().coerceAtLeast(1)
+                if (progression.addXp(v)) leveledUp = true
                 it.remove()
                 continue
             }
@@ -210,7 +210,7 @@ class LootSystem {
         return leveledUp
     }
 
-    fun updateGoldOrbs(delta: Float, playerPos: Vector2, progression: RunProgression) {
+    fun updateGoldOrbs(delta: Float, playerPos: Vector2, progression: RunProgression, goldMul: Float = 1f) {
         if (goldOrbs.isEmpty()) return
 
         val magnetRadius = progression.getMagnetRadiusPx()
@@ -232,7 +232,7 @@ class LootSystem {
             val d2 = dx * dx + dy * dy
 
             if (d2 <= pickupR2) {
-                gold += o.value
+                gold += (o.value * goldMul).toInt().coerceAtLeast(1)
                 it.remove()
                 continue
             }
@@ -250,16 +250,8 @@ class LootSystem {
         }
     }
 
-    private fun rollChestChoices(rarityCost: Int): List<ItemOption> {
-        val opts = ArrayList<ItemOption>(3)
-        var guard = 0
-        while (opts.size < 3 && guard++ < 50) {
-            val item = ItemInstance(rollItemKind(), rollRarityByChestCost(rarityCost))
-            val opt = makeItemOption(item)
-            if (opts.any { it.item.kind == opt.item.kind }) continue
-            opts.add(opt)
-        }
-        return opts
+    private fun rollChestItem(rarityCost: Int): ItemInstance {
+        return ItemInstance(rollItemKind(), rollRarityByChestCost(rarityCost))
     }
 }
 

@@ -1,0 +1,282 @@
+meta:
+  runDurationSec: 300
+  notes: "Черновой сид по описанию из docs/мекасронк.txt. Цифры-ориентиры: normal враг=40HP, стартовый бластер≈28.6 DPS."
+
+weapons:
+  - id: "FROSTSTAFF"
+    uiName: "Посох холода"
+    role: "Магический дальний бой; контроль через замедление"
+    type: "projectile/magic/frost"
+    base:
+      damage: 8
+      cooldownSec: 0.42
+      projectileSpeed: 720
+      spreadRad: 0.10
+      range: 520
+      note: "База≈19 DPS, часть силы в контроле/АОЕ/рикошетах."
+    upgrades:
+      DAMAGE:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { damagePlus: 1.8 }
+      CAST_SPEED:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { cooldownMul: 0.94 }
+      PROJECTILES:
+        cap: 3
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 2 }
+        effectPerStep: { extraProjectiles: 1, spreadRadPlus: 0.05 }
+      SLOW:
+        cap: 6
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { slowPctPlus: 0.06, slowSecondsPlus: 0.10 }
+      PROJECTILE_SIZE_AOE:
+        cap: 6
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { aoeRadiusPlus: 10 }
+      RICOCHET:
+        cap: 2
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 1 }
+        effectPerStep: { ricochetPlus: 1 }
+    mods: {}
+
+  - id: "FIRESTAFF"
+    uiName: "Посох огня"
+    role: "Магический дальний бой; урон через стакающийся ожог"
+    type: "projectile/magic/fire"
+    base:
+      damage: 6
+      cooldownSec: 0.40
+      projectileSpeed: 720
+      spreadRad: 0.10
+      range: 520
+      note: "База≈15 DPS + ожог; стаки должны быть ограничены."
+    upgrades:
+      DAMAGE:
+        cap: 10
+        weight: 1.6
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { damagePlus: 1.4 }
+      CAST_SPEED:
+        cap: 10
+        weight: 1.8
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { cooldownMul: 0.94 }
+      PROJECTILES:
+        cap: 3
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 2 }
+        effectPerStep: { extraProjectiles: 1, spreadRadPlus: 0.05 }
+      BURN_DOT:
+        cap: 10
+        weight: 2.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { burnDpsPlus: 1.2, burnSecondsPlus: 0.15, burnMaxStacksPlus: 1 }
+      PROJECTILE_SIZE_AOE:
+        cap: 6
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { aoeRadiusPlus: 10 }
+      RICOCHET:
+        cap: 2
+        weight: 0.8
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 1 }
+        effectPerStep: { ricochetPlus: 1 }
+    mods: {}
+
+  - id: "REVOLVER_BURST"
+    uiName: "Револьвер"
+    role: "Физический дальний бой; залп несколькими пулями с небольшой перезарядкой"
+    type: "projectile/physical/burst"
+    base:
+      damage: 7.5
+      cooldownSec: 0.65
+      projectileSpeed: 820
+      spreadRad: 0.00
+      range: 560
+      note: "Ориентир на текущий револьвер. Механика burst/reload — отдельные параметры."
+    upgrades:
+      DAMAGE:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { damagePlus: 1.6 }
+      BURST_SHOTS:
+        cap: 5
+        weight: 1.4
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 2 }
+        effectPerStep: { burstShotsPlus: 1, reloadSecondsPlus: 0.08 }
+      CRIT_DAMAGE:
+        cap: 6
+        weight: 1.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { critDamagePlus: 0.20 }
+      CRIT_CHANCE:
+        cap: 6
+        weight: 1.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { critChancePlus: 0.05 }
+      RICOCHET:
+        cap: 2
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 1, LEGENDARY: 1 }
+        effectPerStep: { ricochetPlus: 1 }
+    mods: {}
+
+  - id: "POISON_TRAP"
+    uiName: "Ядовитая ловушка"
+    role: "Магический дальний бой; кидает ловушку, срабатывает при наступании и накладывает яд (ДОТ)"
+    type: "trap/magic/poison"
+    base:
+      damage: 0
+      cooldownSec: 1.10
+      projectileSpeed: 600
+      spreadRad: 0.00
+      range: 380
+      note: "Урон в основном в ДОТ (poisonDps/poisonSeconds)."
+    upgrades:
+      CAST_SPEED:
+        cap: 10
+        weight: 2.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { cooldownMul: 0.93 }
+      POISON_DURATION:
+        cap: 8
+        weight: 1.8
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { poisonSecondsPlus: 0.45 }
+      POISON_DPS:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { poisonDpsPlus: 1.1 }
+      TRAP_AOE:
+        cap: 8
+        weight: 1.4
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { trapRadiusPlus: 14 }
+    mods: {}
+
+  - id: "KATANA"
+    uiName: "Катана"
+    role: "Физический ближний бой; хороший клин; крит-синергии"
+    type: "melee/physical/slash"
+    base:
+      damage: 14
+      cooldownSec: 0.55
+      projectileSpeed: 0
+      spreadRad: 0.00
+      range: 120
+      note: "База≈25 DPS (single target). Реальная сила через область/крит."
+    upgrades:
+      DAMAGE:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { damagePlus: 2.0 }
+      ATTACK_SPEED:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { cooldownMul: 0.94 }
+      AREA:
+        cap: 10
+        weight: 1.6
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { cleaveRangePlus: 10, cleaveAngleDegPlus: 4 }
+      CRIT_DAMAGE:
+        cap: 6
+        weight: 1.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { critDamagePlus: 0.20 }
+      CRIT_CHANCE:
+        cap: 6
+        weight: 1.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { critChancePlus: 0.05 }
+    mods: {}
+
+  - id: "DAGGER"
+    uiName: "Кинжал"
+    role: "Физический ближний бой; быстрые удары; шанс кровотечения"
+    type: "melee/physical/bleed"
+    base:
+      damage: 9
+      cooldownSec: 0.28
+      projectileSpeed: 0
+      spreadRad: 0.00
+      range: 95
+      note: "База≈32 DPS; часть силы уходит в bleed, поэтому базовый урон можно держать чуть ниже при сильном ДОТ."
+    upgrades:
+      DAMAGE:
+        cap: 10
+        weight: 1.6
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { damagePlus: 1.4 }
+      ATTACK_SPEED:
+        cap: 10
+        weight: 2.2
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 4, LEGENDARY: 7 }
+        effectPerStep: { cooldownMul: 0.94 }
+      BLEED_DPS:
+        cap: 10
+        weight: 1.8
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { bleedDpsPlus: 1.0 }
+      BLEED_CHANCE:
+        cap: 6
+        weight: 1.6
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { bleedChancePlus: 0.06 }
+      BLEED_STACKS:
+        cap: 5
+        weight: 1.0
+        raritySteps: { COMMON: 1, RARE: 1, EPIC: 2, LEGENDARY: 2 }
+        effectPerStep: { bleedMaxStacksPlus: 1 }
+    mods: {}
+
+  - id: "POISON_AURA"
+    uiName: "Облако яда"
+    role: "Магическая аура вокруг игрока; постоянный урон + замедление"
+    type: "aura/magic/poison"
+    base:
+      damage: 2
+      cooldownSec: 0.10
+      projectileSpeed: 0
+      spreadRad: 0.00
+      range: 70
+      note: "База≈20 DPS по 1 цели, но это AOE вокруг игрока — будь аккуратен с радиусом."
+    upgrades:
+      AURA_RADIUS:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { auraRadiusPlus: 10 }
+      DPS:
+        cap: 10
+        weight: 2.0
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { damagePlus: 0.6 }
+      SLOW:
+        cap: 6
+        weight: 1.4
+        raritySteps: { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }
+        effectPerStep: { slowPctPlus: 0.05, slowSecondsPlus: 0.10 }
+    mods: {}
+
+passives: []
+items: []
+shrines:
+  rules:
+    standSeconds: 2.6
+    optionsCount: 3
+    allowSkip: true
+  bonuses: []
+

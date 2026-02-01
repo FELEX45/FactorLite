@@ -2,6 +2,7 @@ package com.factorlite.game
 
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Vector2
+import com.factorlite.content.Balance
 import com.factorlite.progression.BonusRarity
 import com.factorlite.progression.GlobalBonusKind
 import com.factorlite.progression.GlobalBonusOption
@@ -21,17 +22,18 @@ class ShrineSystem {
 
     fun reset() {
         shrines.clear()
-        nextSpawnAt = 35f
+        nextSpawnAt = Balance.cfg.shrines.firstSpawnAt
     }
 
     /**
      * @return choices when a shrine is completed; otherwise null
      */
-    fun update(delta: Float, runTime: Float, playerPos: Vector2): List<GlobalBonusOption>? {
-        if (runTime >= nextSpawnAt && shrines.size < 2) {
-            spawnShrineAround(playerPos)
+    fun update(delta: Float, runTime: Float, playerPos: Vector2, arenaHalfW: Float, arenaHalfH: Float): List<GlobalBonusOption>? {
+        val sb = Balance.cfg.shrines
+        if (runTime >= nextSpawnAt && shrines.size < sb.maxOnMap) {
+            spawnShrineAround(playerPos, arenaHalfW, arenaHalfH)
             // дальше чуть чаще
-            nextSpawnAt = runTime + MathUtils.random(55f, 85f)
+            nextSpawnAt = runTime + MathUtils.random(sb.nextIntervalMin, sb.nextIntervalMax)
         }
 
         for (s in shrines) {
@@ -55,11 +57,15 @@ class ShrineSystem {
         return null
     }
 
-    private fun spawnShrineAround(playerPos: Vector2) {
-        val dist = MathUtils.random(260f, 420f)
+    private fun spawnShrineAround(playerPos: Vector2, arenaHalfW: Float, arenaHalfH: Float) {
+        val sb = Balance.cfg.shrines
+        val dist = MathUtils.random(sb.spawnDistMin, sb.spawnDistMax)
         val ang = MathUtils.random(0f, MathUtils.PI2)
-        val x = playerPos.x + MathUtils.cos(ang) * dist
-        val y = playerPos.y + MathUtils.sin(ang) * dist
+        val x0 = playerPos.x + MathUtils.cos(ang) * dist
+        val y0 = playerPos.y + MathUtils.sin(ang) * dist
+        // Не даём заспавниться за “картой” (вне арены/границ движения игрока)
+        val x = MathUtils.clamp(x0, -arenaHalfW + sb.edgeMargin, arenaHalfW - sb.edgeMargin)
+        val y = MathUtils.clamp(y0, -arenaHalfH + sb.edgeMargin, arenaHalfH - sb.edgeMargin)
         shrines.add(Shrine(pos = Vector2(x, y)))
     }
 

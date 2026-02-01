@@ -7,7 +7,8 @@ import com.factorlite.FactorLiteGame
 fun main() {
     val config = Lwjgl3ApplicationConfiguration().apply {
         setTitle("FactorLite")
-        setWindowedMode(960, 540)
+        // Портретное окно под телефонный формат (9:16). Для 9:21 можно поставить 540x1260.
+        setWindowedMode(540, 960)
         useVsync(true)
         setForegroundFPS(60)
     }

@@ -17,5 +17,8 @@ Desktop.ini
 # Optional local caches
 **/.kotlin/
 
+# Android generated natives (copied from Gradle deps)
+android/src/main/jniLibs/
+
 # Local tools (never commit binaries/zips)
 tools/

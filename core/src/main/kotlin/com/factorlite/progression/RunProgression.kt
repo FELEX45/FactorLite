@@ -1,8 +1,20 @@
 package com.factorlite.progression
 
+import com.factorlite.content.Balance
 import kotlin.math.max
+import kotlin.math.pow
 
 class RunProgression {
+    var character: CharacterKind = CharacterKind.FROZKA
+        private set
+
+    /**
+     * Врождёнка прокачивается автоматически каждый раз при получении уровня.
+     * Храним отдельно, чтобы не путать с уровнем игрока.
+     */
+    var innateLevel: Int = 0
+        private set
+
     var level: Int = 1
         private set
 
@@ -13,7 +25,7 @@ class RunProgression {
         private set
 
     val weapons = mutableListOf<WeaponInstance>()
-    val passives = mutableListOf<PassiveInstance>()
+    val rings = mutableListOf<RingInstance>()
 
     // Глобальные бонусы (из святынь), мультипликативные/аддитивные, не занимают слоты.
     private var eliteFrequencyBonus: Float = 0f      // +% к шансу элит
@@ -25,14 +37,20 @@ class RunProgression {
 
     // Слоты на релиз: 2+2
     val maxWeapons = 2
-    val maxPassives = 2
+    val maxRings = 2
+
+    init {
+        // Подтянем кривую из конфига сразу (Balance уже грузится при старте игры).
+        xpToNext = nextXpGoal(level)
+    }
 
     fun reset() {
         level = 1
         xp = 0
-        xpToNext = 12
+        xpToNext = nextXpGoal(level)
         weapons.clear()
-        passives.clear()
+        rings.clear()
+        innateLevel = 0
         eliteFrequencyBonus = 0f
         globalCritChanceBonus = 0f
         globalDamageBonus = 0f
@@ -41,13 +59,20 @@ class RunProgression {
         globalDifficultyBonus = 0f
     }
 
+    fun setCharacter(kind: CharacterKind) {
+        character = kind
+    }
+
     fun addXp(amount: Int): Boolean {
         if (amount <= 0) return false
-        xp += amount
+        // Кольцо разума: множитель опыта.
+        val scaled = (amount.toFloat() * getXpGainMultiplier()).toInt().coerceAtLeast(1)
+        xp += scaled
         var leveled = false
         while (xp >= xpToNext) {
             xp -= xpToNext
             level += 1
+            innateLevel += 1
             xpToNext = nextXpGoal(level)
             leveled = true
         }
@@ -72,14 +97,14 @@ class RunProgression {
                 applyWeaponUpgrade(option.weaponKind, option.upgrade, option.steps)
             }
 
-            is UpgradeOption.AddPassive -> {
-                if (passives.size < maxPassives && passives.none { it.kind == option.passiveKind }) {
-                    passives += PassiveInstance(option.passiveKind, level = 1)
+            is UpgradeOption.AddRing -> {
+                if (rings.size < maxRings && rings.none { it.kind == option.ringKind }) {
+                    rings += RingInstance(option.ringKind, level = 1)
                 }
             }
 
-            is UpgradeOption.UpgradePassive -> {
-                passives.firstOrNull { it.kind == option.passiveKind }?.let { it.level += option.steps }
+            is UpgradeOption.UpgradeRing -> {
+                rings.firstOrNull { it.kind == option.ringKind }?.let { it.level += option.steps }
             }
 
             is UpgradeOption.WeaponMod -> {
@@ -132,41 +157,103 @@ class RunProgression {
     }
 
     fun getMoveSpeedMultiplier(): Float {
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.MOVE_SPEED }?.level ?: 0
-        return 1f + lvl * 0.06f
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.SPEED }?.level ?: 0
+        val ringMul = 1f + lvl * rb.speedPerLevel
+        val innateMul = 1f + getInnateMoveSpeedBonus()
+        return ringMul * innateMul
     }
 
     fun getDamageMultiplier(): Float {
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.DAMAGE }?.level ?: 0
-        return (1f + lvl * 0.12f) * (1f + globalDamageBonus)
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.DAMAGE }?.level ?: 0
+        return (1f + lvl * rb.damagePerLevel) * (1f + globalDamageBonus)
+    }
+
+    fun getDamageMultiplierForWeapon(kind: WeaponKind): Float {
+        val base = getDamageMultiplier()
+        val v = getInnateValue()
+        val typeBonus = when (character.innate) {
+            InnateKind.MAGIC_DAMAGE -> if (kind.isMagic) v else 0f
+            InnateKind.PHYSICAL_DAMAGE -> if (!kind.isMagic) v else 0f
+            else -> 0f
+        }
+        return base * (1f + typeBonus)
     }
 
     fun getFireRateMultiplier(): Float {
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.FIRE_RATE }?.level ?: 0
-        return (1f + lvl * 0.10f) * (1f + globalFireRateBonus)
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.QUICK_HAND }?.level ?: 0
+        return (1f + lvl * rb.quickHandPerLevel) * (1f + globalFireRateBonus)
     }
 
     fun getCritChance(): Float {
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.CRIT_CHANCE }?.level ?: 0
-        return (max(0f, 0.02f * lvl) + globalCritChanceBonus).coerceAtMost(0.85f)
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.LUCKY }?.level ?: 0
+        return (max(0f, rb.critChancePerLevel * lvl) + globalCritChanceBonus).coerceAtMost(rb.critChanceCap)
     }
 
     fun getCritDamageMultiplier(): Float {
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.CRIT_DAMAGE }?.level ?: 0
-        return 1.5f + lvl * 0.15f
+        // По дизайну: базовый крит-урон x2.
+        return 2.0f
     }
 
     fun getMagnetRadiusPx(): Float {
-        // Радиус притяжения/подбора XP в world-space (у нас ~px).
-        // База достаточная, чтобы “чувствовалось”, дальше — ощутимый рост.
-        val lvl = passives.firstOrNull { it.kind == PassiveKind.MAGNET }?.level ?: 0
-        val base = 140f + lvl * 40f
-        return base * (1f + globalPickupRadiusBonus)
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.MAGNET }?.level ?: 0
+        val mul = 1f + lvl * rb.magnetPerLevel
+        return rb.magnetBase * mul * (1f + globalPickupRadiusBonus)
     }
 
     private fun nextXpGoal(level: Int): Int {
-        // Очень простая кривая: растёт плавно
-        return 10 + (level * 3)
+        val pb = Balance.cfg.progression
+        val l = (level - 1).coerceAtLeast(0).toFloat()
+        val need = pb.xpToNextBase + pb.xpToNextPerLevel * l.pow(pb.xpToNextPow.coerceAtLeast(0.05f))
+        return need.toInt().coerceAtLeast(8)
     }
+
+    fun getDodgeChance(): Float {
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.WIND }?.level ?: 0
+        return (getInnateDodgeChanceBonus() + lvl * rb.dodgePerLevel).coerceIn(0f, rb.dodgeChanceCap)
+    }
+
+    fun getLifeStealPct(): Float {
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.VAMPIRE }?.level ?: 0
+        return (lvl * rb.lifestealPerLevel).coerceIn(0f, rb.lifestealCap)
+    }
+
+    fun getMaxHpMultiplier(): Float {
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.VITALITY }?.level ?: 0
+        return (1f + lvl * rb.maxHpPerLevel).coerceIn(0.5f, rb.maxHpMulCap)
+    }
+
+    fun getXpGainMultiplier(): Float {
+        val rb = Balance.cfg.rings
+        val lvl = rings.firstOrNull { it.kind == RingKind.MIND }?.level ?: 0
+        return (1f + lvl * rb.xpGainPerLevel).coerceIn(0.2f, rb.xpGainMulCap)
+    }
+
+    fun getInnateValue(): Float = (innateLevel.coerceAtLeast(0) * character.innatePerLevel).coerceAtLeast(0f)
+
+    fun getInnateMoveSpeedBonus(): Float {
+        if (character.innate != InnateKind.MOVE_SPEED) return 0f
+        return getInnateValue().coerceAtMost(0.45f)
+    }
+
+    // Заготовки под будущие системы (пока не используются).
+    fun getInnateSlowBonus(): Float =
+        if (character.innate == InnateKind.SLOW_ENEMIES) getInnateValue().coerceAtMost(0.45f) else 0f
+
+    fun getInnateDotSpeedBonus(): Float =
+        if (character.innate == InnateKind.DOT_SPEED) getInnateValue().coerceAtMost(0.80f) else 0f
+
+    fun getInnateAreaSizeBonus(): Float =
+        if (character.innate == InnateKind.AREA_SIZE) getInnateValue().coerceAtMost(0.90f) else 0f
+
+    fun getInnateDodgeChanceBonus(): Float =
+        if (character.innate == InnateKind.DODGE_CHANCE) getInnateValue().coerceAtMost(0.35f) else 0f
 }
 

@@ -8,12 +8,14 @@ import com.badlogic.gdx.graphics.Color
 import com.badlogic.gdx.graphics.GL20
 import com.badlogic.gdx.graphics.OrthographicCamera
 import com.badlogic.gdx.graphics.g2d.BitmapFont
+import com.badlogic.gdx.graphics.g2d.GlyphLayout
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer
 import com.badlogic.gdx.math.Interpolation
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Rectangle
 import com.badlogic.gdx.math.Vector2
+import com.badlogic.gdx.utils.Align
 import com.badlogic.gdx.utils.viewport.FitViewport
 import com.badlogic.gdx.utils.viewport.ScreenViewport
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator
@@ -30,10 +32,14 @@ import com.factorlite.game.PlayerDamageSystem
 import com.factorlite.game.ShrineSystem
 import com.factorlite.input.FloatingJoystick
 import com.factorlite.loot.ItemInstance
-import com.factorlite.loot.ItemOption
 import com.factorlite.loot.ItemTriggerSystem
+import com.factorlite.loot.uiName
 import com.factorlite.screens.RunUiSystem
+import com.factorlite.content.Balance
+import com.factorlite.gfx.Sprites
 import com.factorlite.progression.GlobalBonusOption
+import com.factorlite.progression.CharacterKind
+import com.factorlite.progression.playerSpriteKey
 import com.factorlite.progression.RunProgression
 import com.factorlite.progression.UpgradeOption
 import com.factorlite.progression.WeaponKind
@@ -46,8 +52,14 @@ class GameScreen : ScreenAdapter() {
     private val runDurationSec = 5f * 60f
     private var bossSpawned = false
 
+    // Портретный "телефонный" формат. Можно переключить на 9:21.
+    private enum class PhoneAspect(val hOverW: Float) { R9_16(16f / 9f), R9_21(21f / 9f) }
+    private val phoneAspect: PhoneAspect = PhoneAspect.R9_16
+    private val viewW = 540f
+    private val viewH = viewW * phoneAspect.hOverW
+
     private val camera = OrthographicCamera()
-    private val viewport = FitViewport(960f, 540f, camera)
+    private val viewport = FitViewport(viewW, viewH, camera)
 
     private val shapes = ShapeRenderer()
 
@@ -55,6 +67,12 @@ class GameScreen : ScreenAdapter() {
     private val uiViewport = ScreenViewport(uiCamera)
     private val batch = SpriteBatch()
     private var font: BitmapFont = BitmapFont()
+    private val glyph = GlyphLayout()
+    private var fatalErrorText: String? = null
+
+    // Глобальный скейл интерфейса под телефон (HUD + карточки).
+    // Если захочешь — вынесем в баланс/настройки.
+    private val uiScale: Float = 1.45f
 
     private val joystick = FloatingJoystick(
         deadzonePx = 12f,
@@ -69,7 +87,8 @@ class GameScreen : ScreenAdapter() {
 
     private val basePlayerSpeed = 260f
     private val playerRadius = 14f
-    private val playerDamage = PlayerDamageSystem(maxHp = 100f)
+    private val baseMaxHp = 100f
+    private val playerDamage = PlayerDamageSystem(maxHp = baseMaxHp)
     private var runTime = 0f
     private var runState: RunState = RunState.RUNNING
 
@@ -77,7 +96,29 @@ class GameScreen : ScreenAdapter() {
     private var pendingChoices: List<UpgradeOption> = emptyList()
     private val tmpVec = Vector2()
 
-    private var pendingChestChoices: List<ItemOption> = emptyList()
+    // Пока без UI выбора: дефолтный персонаж. Позже заменим на меню/сохранение.
+    private var selectedCharacter: CharacterKind = CharacterKind.FROZKA
+    private val characterChoices: List<CharacterKind> = CharacterKind.entries.toList()
+
+    private enum class DifficultyKind(
+        val uiName: String,
+        val description: String,
+        val enemyHpMul: Float,
+        val enemyDamageMul: Float,
+        val spawnIntervalMul: Float,
+    ) {
+        EASY("Лёгкая", "Меньше врагов и урона.", enemyHpMul = 0.85f, enemyDamageMul = 0.80f, spawnIntervalMul = 1.25f),
+        MEDIUM("Средняя", "Чуть проще, чем сейчас.", enemyHpMul = 0.92f, enemyDamageMul = 0.90f, spawnIntervalMul = 1.10f),
+        HARD("Сложная", "Текущая (как сейчас).", enemyHpMul = 1.00f, enemyDamageMul = 1.00f, spawnIntervalMul = 1.00f),
+    }
+
+    private var selectedDifficulty: DifficultyKind = DifficultyKind.HARD
+    private val difficultyChoices: List<DifficultyKind> = DifficultyKind.entries.toList()
+
+    // Пауза: кнопка в правом верхнем углу HUD
+    private val pauseRect = Rectangle()
+    private lateinit var pauseInput: InputAdapter
+
     private var pendingShrineChoices: List<GlobalBonusOption> = emptyList()
     private val items = ArrayList<ItemInstance>()
     private val loot = LootSystem()
@@ -89,14 +130,24 @@ class GameScreen : ScreenAdapter() {
     private val itemSystem = ItemTriggerSystem()
 
     private val enemies = ArrayList<Enemy>()
+    private var killedEnemies: Int = 0
+    private data class PoisonTrapCloud(
+        val pos: Vector2,
+        var armTimer: Float,
+        var cloudTimer: Float,
+        val radius: Float,
+        val dps: Float,
+        val slowPct: Float,
+    )
+    private val poisonTraps: MutableList<PoisonTrapCloud> = ArrayList()
 
     // retargetTimer перенесён в TargetingSystem
 
     private val spawnDirector = SpawnDirector()
 
-    // Простая арена (пока)
-    private val arenaHalfW = 900f
-    private val arenaHalfH = 500f
+    // Простая арена (пока) — под портретное окно.
+    private val arenaHalfW = 520f
+    private val arenaHalfH = 920f
 
     override fun show() {
         inputMux.clear()
@@ -105,16 +156,18 @@ class GameScreen : ScreenAdapter() {
             getRunState = { runState },
             getOptionCount = {
                 when (runState) {
+                    RunState.DIFFICULTY_SELECT -> difficultyChoices.size
+                    RunState.CHARACTER_SELECT -> characterChoices.size
                     RunState.LEVEL_UP -> pendingChoices.size
-                    RunState.CHEST_OPEN -> pendingChestChoices.size
                     RunState.SHRINE_OPEN -> pendingShrineChoices.size
                     else -> 0
                 }
             },
             onPick = { idx ->
                 when (runState) {
+                    RunState.DIFFICULTY_SELECT -> applyDifficultyPick(idx)
+                    RunState.CHARACTER_SELECT -> applyCharacterPick(idx)
                     RunState.LEVEL_UP -> applyLevelUpChoice(idx)
-                    RunState.CHEST_OPEN -> applyChestChoice(idx)
                     RunState.SHRINE_OPEN -> {
                         if (idx == 3) {
                             pendingShrineChoices = emptyList()
@@ -127,34 +180,88 @@ class GameScreen : ScreenAdapter() {
                 }
             },
         )
+
+        pauseInput = object : InputAdapter() {
+            override fun touchDown(screenX: Int, screenY: Int, pointer: Int, button: Int): Boolean {
+                if (runState != RunState.RUNNING && runState != RunState.PAUSED) return false
+                tmpVec.set(screenX.toFloat(), screenY.toFloat())
+                uiViewport.unproject(tmpVec)
+                if (pauseRect.contains(tmpVec.x, tmpVec.y)) {
+                    runState = if (runState == RunState.RUNNING) RunState.PAUSED else RunState.RUNNING
+                    return true
+                }
+                return false
+            }
+        }
+
         inputMux.addProcessor(uiTapInput)
+        inputMux.addProcessor(pauseInput)
         inputMux.addProcessor(joystick)
         Gdx.input.inputProcessor = inputMux
         rebuildFont()
-        resetRun()
+        enterDifficultySelect()
     }
 
     override fun resize(width: Int, height: Int) {
         viewport.update(width, height, true)
         uiViewport.update(width, height, true)
         rebuildFont()
-        uiSystem.layoutCards(uiViewport)
+        val count = when (runState) {
+            RunState.DIFFICULTY_SELECT -> difficultyChoices.size
+            RunState.CHARACTER_SELECT -> characterChoices.size
+            RunState.LEVEL_UP -> pendingChoices.size
+            RunState.SHRINE_OPEN -> pendingShrineChoices.size
+            else -> 0
+        }
+        uiSystem.layoutCards(uiViewport, optionCount = count, withSkip = (runState == RunState.SHRINE_OPEN), uiScale = uiScale)
+
+        // Позиция кнопки паузы обновляется в drawHud() (зависит от высоты HUD),
+        // но держим дефолт, чтобы клики работали даже до первой отрисовки.
+        val w = uiViewport.worldWidth
+        val h = uiViewport.worldHeight
+        pauseRect.set(w - 16f - 44f, h - 16f - 44f, 44f, 44f)
     }
 
     override fun render(delta: Float) {
+        // Если на телефоне/устройстве что-то падает — показываем ошибку на экране, а не вылетаем молча.
+        fatalErrorText?.let { err ->
+            Gdx.gl.glClearColor(0.05f, 0.05f, 0.06f, 1f)
+            Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT)
+            uiViewport.apply()
+            batch.projectionMatrix = uiCamera.combined
+            batch.begin()
+            font.color = Color(1f, 0.55f, 0.55f, 1f)
+            font.draw(batch, "CRASH (не закрываем, чтобы увидеть причину)", 16f, uiViewport.worldHeight - 18f)
+            font.color = Color.WHITE
+            glyph.setText(font, err, Color.WHITE, uiViewport.worldWidth - 32f, Align.left, true)
+            font.draw(batch, glyph, 16f, uiViewport.worldHeight - 52f)
+            batch.end()
+            return
+        }
+
+        try {
+        // Быстрая пауза с клавиатуры (ПК)
+        if (runState == RunState.RUNNING &&
+            (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.ESCAPE) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE))
+        ) {
+            runState = RunState.PAUSED
+        }
+
         when (runState) {
+            RunState.DIFFICULTY_SELECT -> handleDifficultySelectInput()
+            RunState.CHARACTER_SELECT -> handleCharacterSelectInput()
+            RunState.PAUSED -> handlePauseInput()
             RunState.RUNNING -> update(delta)
             RunState.LEVEL_UP -> handleLevelUpInput()
-            RunState.CHEST_OPEN -> handleChestInput()
             RunState.SHRINE_OPEN -> handleShrineInput()
             RunState.VICTORY -> {
                 if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.R) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE)) {
-                    resetRun()
+                    enterDifficultySelect()
                 }
             }
             RunState.GAME_OVER -> {
                 if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.R) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE)) {
-                    resetRun()
+                    enterDifficultySelect()
                 }
             }
         }
@@ -171,69 +278,80 @@ class GameScreen : ScreenAdapter() {
         shapes.rect(-arenaHalfW, -arenaHalfH, arenaHalfW * 2f, arenaHalfH * 2f)
         shapes.end()
 
-        shapes.begin(ShapeRenderer.ShapeType.Filled)
-        // Игрок мигает при неуязвимости
+        // --- Спрайты мира ---
+        batch.projectionMatrix = camera.combined
+        batch.begin()
+
+        val texPlayer = Sprites.get(progression.character.playerSpriteKey) {
+            Sprites.get("player") { Sprites.circleTexture(64, Color.WHITE) }
+        }
         val invulnT = (playerDamage.invuln / 0.6f).coerceIn(0f, 1f)
-        val a = if (playerDamage.invuln > 0f) 0.35f + 0.65f * (1f - Interpolation.fade.apply(invulnT)) else 1f
-        shapes.color = Color(1f, 1f, 1f, a)
-        shapes.circle(playerPos.x, playerPos.y, playerRadius, 20)
+        val alpha = if (playerDamage.invuln > 0f) 0.35f + 0.65f * (1f - Interpolation.fade.apply(invulnT)) else 1f
+        Sprites.drawCentered(batch, texPlayer, playerPos.x, playerPos.y, playerRadius * 2f, playerRadius * 2f, alpha = alpha)
 
-        // Враги
+        val texEnemyNormal = Sprites.get("enemy_normal") { Sprites.circleTexture(64, Color(0.95f, 0.25f, 0.25f, 1f)) }
+        val texEnemyFast = Sprites.get("enemy_fast") { Sprites.circleTexture(64, Color(1f, 0.45f, 0.35f, 1f)) }
+        val texEnemyTank = Sprites.get("enemy_tank") { Sprites.circleTexture(64, Color(0.85f, 0.15f, 0.15f, 1f)) }
+        val texEnemyRanged = Sprites.get("enemy_ranged") { Sprites.circleTexture(64, Color(0.95f, 0.35f, 0.95f, 1f)) }
+        val texEnemyElite = Sprites.get("enemy_elite") { Sprites.circleTexture(64, Color(0.95f, 0.25f, 0.95f, 1f)) }
+        val texEnemyBoss = Sprites.get("enemy_boss") { Sprites.circleTexture(64, Color(1f, 0.55f, 0.15f, 1f)) }
+
         for (e in enemies) {
-            shapes.color =
-                when {
-                    e.isBoss -> Color(1f, 0.55f, 0.15f, 1f)
-                    e.isElite -> Color(0.95f, 0.25f, 0.95f, 1f)
-                    else -> Color(0.95f, 0.25f, 0.25f, 1f)
+            val t = when {
+                e.isBoss -> texEnemyBoss
+                e.isElite -> texEnemyElite
+                else -> when (e.kind) {
+                    EnemyKind.NORMAL -> texEnemyNormal
+                    EnemyKind.FAST -> texEnemyFast
+                    EnemyKind.TANK -> texEnemyTank
+                    EnemyKind.RANGED -> texEnemyRanged
                 }
-            shapes.circle(e.pos.x, e.pos.y, e.radius, 18)
+            }
+            Sprites.drawCentered(batch, t, e.pos.x, e.pos.y, e.radius * 2f, e.radius * 2f)
         }
 
-        // XP-сферы
-        shapes.color = Color(0.35f, 0.95f, 0.95f, 1f)
-        for (o in loot.xpOrbs) {
-            shapes.circle(o.pos.x, o.pos.y, 6.5f, 14)
-        }
+        val texXp = Sprites.get("orb_xp") { Sprites.circleTexture(32, Color(0.35f, 0.95f, 0.95f, 1f)) }
+        for (o in loot.xpOrbs) Sprites.drawCentered(batch, texXp, o.pos.x, o.pos.y, 13f, 13f)
 
-        // Монетки (gold)
-        shapes.color = Color(1f, 0.85f, 0.25f, 1f)
-        for (o in loot.goldOrbs) {
-            shapes.circle(o.pos.x, o.pos.y, 5.5f, 14)
-        }
+        val texGold = Sprites.get("orb_gold") { Sprites.circleTexture(32, Color(1f, 0.85f, 0.25f, 1f)) }
+        for (o in loot.goldOrbs) Sprites.drawCentered(batch, texGold, o.pos.x, o.pos.y, 11f, 11f)
 
-        // Сундуки
+        val texChest = Sprites.get("chest") { Sprites.circleTexture(48, Color(0.25f, 0.75f, 1f, 1f)) }
+        val texChestElite = Sprites.get("chest_elite") { Sprites.circleTexture(48, Color(1f, 0.85f, 0.25f, 1f)) }
         for (c in loot.chests) {
-            shapes.color = if (c.isElite) Color(1f, 0.85f, 0.25f, 1f) else Color(0.25f, 0.75f, 1f, 1f)
-            shapes.circle(c.pos.x, c.pos.y, c.radius, 18)
+            Sprites.drawCentered(batch, if (c.isElite) texChestElite else texChest, c.pos.x, c.pos.y, c.radius * 2f, c.radius * 2f)
         }
 
-        // Святыни (зоны зарядки)
+        val texShrine = Sprites.get("shrine") { Sprites.circleTexture(64, Color(0.25f, 0.95f, 0.45f, 0.75f)) }
         for (s in shrineSystem.shrines) {
-            shapes.color = Color(0.25f, 0.95f, 0.45f, 0.28f)
-            shapes.circle(s.pos.x, s.pos.y, s.radius, 26)
+            // Иконка + лёгкая "пульсация" прогресса
             val p = (s.progressSec / s.requiredSec).coerceIn(0f, 1f)
-            shapes.color = Color(0.25f, 0.95f, 0.45f, 0.75f)
-            shapes.circle(s.pos.x, s.pos.y, 6f + 12f * p, 18)
+            Sprites.drawCentered(batch, texShrine, s.pos.x, s.pos.y, 26f, 26f, alpha = 0.55f)
+            Sprites.drawCentered(batch, texShrine, s.pos.x, s.pos.y, 10f + 14f * p, 10f + 14f * p, alpha = 0.75f)
         }
 
-        // Токсичное облако (визуал)
+        val texCloud = Sprites.get("cloud_toxic") { Sprites.circleTexture(128, Color(0.3f, 1f, 0.3f, 0.25f)) }
         if (itemSystem.toxicActive()) {
-            shapes.color = Color(0.3f, 1f, 0.3f, 0.25f)
-            shapes.circle(playerPos.x, playerPos.y, itemSystem.toxicRadius(), 36)
+            val r = itemSystem.toxicRadius()
+            Sprites.drawCentered(batch, texCloud, playerPos.x, playerPos.y, r * 2f, r * 2f, alpha = 0.25f)
+        }
+        // Ловушки (иконка) / облако от ловушки
+        val texTrap = Sprites.get("trap") { Sprites.circleTexture(64, Color(0.35f, 0.95f, 0.45f, 1f)) }
+        for (t in poisonTraps) {
+            if (t.armTimer > 0f) {
+                Sprites.drawCentered(batch, texTrap, t.pos.x, t.pos.y, 18f, 18f, alpha = 0.85f)
+            } else if (t.cloudTimer > 0f) {
+                Sprites.drawCentered(batch, texCloud, t.pos.x, t.pos.y, t.radius * 2f, t.radius * 2f, alpha = 0.22f)
+            }
         }
 
-        // Снаряды
-        shapes.color = Color(1f, 0.9f, 0.2f, 1f)
-        for (p in combat.projectiles) {
-            shapes.circle(p.pos.x, p.pos.y, p.radius, 12)
-        }
+        val texProjP = Sprites.get("projectile_player") { Sprites.circleTexture(24, Color(1f, 0.9f, 0.2f, 1f)) }
+        for (p in combat.projectiles) Sprites.drawCentered(batch, texProjP, p.pos.x, p.pos.y, p.radius * 2f, p.radius * 2f)
 
-        // Вражеские снаряды
-        shapes.color = Color(0.95f, 0.55f, 1f, 1f)
-        for (p in combat.enemyProjectiles) {
-            shapes.circle(p.pos.x, p.pos.y, p.radius, 12)
-        }
-        shapes.end()
+        val texProjE = Sprites.get("projectile_enemy") { Sprites.circleTexture(24, Color(0.95f, 0.55f, 1f, 1f)) }
+        for (p in combat.enemyProjectiles) Sprites.drawCentered(batch, texProjE, p.pos.x, p.pos.y, p.radius * 2f, p.radius * 2f)
+
+        batch.end()
 
         // Молнии (визуал, короткий)
         if (itemSystem.lightningFx.isNotEmpty()) {
@@ -259,12 +377,28 @@ class GameScreen : ScreenAdapter() {
 
         // HUD (screen-space)
         drawHud()
+        } catch (t: Throwable) {
+            // Лог в logcat + текст на экране (чтобы можно было прислать скрин).
+            Gdx.app?.error("FactorLite", "Fatal error in GameScreen.render()", t)
+            val sb = StringBuilder()
+            sb.append(t::class.java.name).append(": ").append(t.message ?: "(no message)").append('\n')
+            val st = t.stackTrace
+            val maxLines = 14
+            for (i in 0 until minOf(maxLines, st.size)) {
+                sb.append("  at ").append(st[i].toString()).append('\n')
+            }
+            if (st.size > maxLines) sb.append("  ... (${st.size - maxLines} more)\n")
+            sb.append("\nСделай скрин этого текста и пришли мне.")
+            fatalErrorText = sb.toString()
+        }
     }
 
     private fun update(delta: Float) {
         runTime += delta
         itemSystem.update(delta)
         playerDamage.update(delta)
+        // Кольцо жизненной силы: динамический max HP (обновляем каждый тик, чтобы работало сразу после выбора).
+        playerDamage.setMaxHp(baseMaxHp * progression.getMaxHpMultiplier())
 
         // 5 минут -> босс уровня (останавливаем обычные волны)
         if (!bossSpawned && runTime >= runDurationSec) {
@@ -284,10 +418,20 @@ class GameScreen : ScreenAdapter() {
         if (!bossSpawned) {
             updateSpawns(delta)
         }
+        // Difficulty multiplier for enemy combat (matches spawnEnemy() logic)
+        val dc = Balance.cfg.spawning.enemy.difficulty
+        val timeMul = 1f + (runTime / runDurationSec).coerceIn(0f, 1f) * dc.timeMulBonusAtEnd
+        // enemyDiffMul влияет на дальний урон/темп врагов в EnemySystem, поэтому домножаем на выбранную сложность по урону.
+        val enemyDiffMul = progression.getDifficultyMultiplier() * timeMul * selectedDifficulty.enemyDamageMul
         enemySystem.updateEnemies(
             delta = delta,
             runTime = runTime,
+            difficultyMul = enemyDiffMul,
+            // Врождёнка Фрозки: замедление врагов (движение + темп стрельбы дальников).
+            enemySpeedMul = (1f - progression.getInnateSlowBonus()).coerceIn(0.35f, 1f),
             playerPos = playerPos,
+            arenaHalfW = arenaHalfW,
+            arenaHalfH = arenaHalfH,
             enemies = enemies,
             spawnEnemyShot = { pos, dir, damage, speed, radius ->
                 combat.spawnEnemyProjectile(
@@ -303,10 +447,17 @@ class GameScreen : ScreenAdapter() {
         if (!bossSpawned) {
             loot.updateChestSpawns(delta, arenaHalfW, arenaHalfH, playerPos)
         }
-        val leveledUp = loot.updateXpOrbs(delta, playerPos, progression)
-        loot.updateGoldOrbs(delta, playerPos, progression)
+        val easyBonus = if (selectedDifficulty == DifficultyKind.EASY) 2f else 1f
+        val leveledUp = loot.updateXpOrbs(delta, playerPos, progression, xpMul = easyBonus)
+        loot.updateGoldOrbs(delta, playerPos, progression, goldMul = easyBonus)
+        updateEnemyStatusesAndDots(delta)
+        updatePoisonTraps(delta)
         itemSystem.applyToxicDamage(
             delta = delta,
+            // Врождёнка Фарзера: ускорение ДОТОК (по факту множитель урона в секунду).
+            damageMul = (1f + progression.getInnateDotSpeedBonus()).coerceIn(0.2f, 3.0f),
+            // Врождёнка Трапера: увеличение области (радиус облака/зон).
+            radiusMul = (1f + progression.getInnateAreaSizeBonus()).coerceIn(0.4f, 3.0f),
             playerPos = playerPos,
             enemies = enemies,
             isAlive = { it.hp > 0f },
@@ -316,9 +467,9 @@ class GameScreen : ScreenAdapter() {
         applyContactDamage()
         updateEnemyProjectiles(delta)
         loot.tryOpenChestByProximity(playerPos)?.let { res ->
-            pendingChestChoices = res.choices
-            runState = RunState.CHEST_OPEN
-            uiSystem.layoutCards(uiViewport)
+            // Сундук теперь сразу выдаёт рандомный предмет (без UI выбора)
+            items.add(res.item)
+            itemSystem.addItem(res.item)
         }
 
         // Камера следует за игроком
@@ -327,15 +478,15 @@ class GameScreen : ScreenAdapter() {
 
         // Радиус таргетинга растёт от "дальности" у оружия (как апгрейд паттерна)
         val extraRange = progression.weapons.maxOfOrNull { it.rangeLevel } ?: 0
-        targetingSystem.range = 520f + extraRange * 35f
+        targetingSystem.range = Balance.cfg.targeting.baseRange + extraRange * Balance.cfg.targeting.rangePerLevel
         targetingSystem.update(delta, playerPos, enemies)
 
         // Святыни: выключаем на фазе босса
         if (!bossSpawned) {
-            shrineSystem.update(delta = delta, runTime = runTime, playerPos = playerPos)?.let { choices ->
+            shrineSystem.update(delta = delta, runTime = runTime, playerPos = playerPos, arenaHalfW = arenaHalfW, arenaHalfH = arenaHalfH)?.let { choices ->
                 pendingShrineChoices = choices
                 runState = RunState.SHRINE_OPEN
-                uiSystem.layoutCards(uiViewport)
+                uiSystem.layoutCards(uiViewport, optionCount = pendingShrineChoices.size, withSkip = true, uiScale = uiScale)
                 return
             }
         }
@@ -346,7 +497,164 @@ class GameScreen : ScreenAdapter() {
         if (leveledUp && runState == RunState.RUNNING) {
             pendingChoices = progression.makeUpgradeChoices()
             runState = RunState.LEVEL_UP
-            uiSystem.layoutCards(uiViewport)
+            uiSystem.layoutCards(uiViewport, optionCount = pendingChoices.size, withSkip = false, uiScale = uiScale)
+        }
+    }
+
+    private fun updateEnemyStatusesAndDots(delta: Float) {
+        val lifesteal = progression.getLifeStealPct()
+        for (e in enemies) {
+            if (e.hp <= 0f) continue
+
+            // Slow
+            if (e.slowTimer > 0f) {
+                e.slowTimer = max(0f, e.slowTimer - delta)
+                if (e.slowTimer <= 0f) e.slowMul = 1f
+            } else {
+                e.slowMul = 1f
+            }
+
+            // Burn / Bleed DOT
+            var dps = 0f
+            if (e.burnStacks > 0) {
+                e.burnTimer = max(0f, e.burnTimer - delta)
+                if (e.burnTimer <= 0f) {
+                    e.burnStacks = 0
+                    e.burnDpsPerStack = 0f
+                } else {
+                    dps += e.burnStacks * e.burnDpsPerStack
+                }
+            }
+            if (e.bleedStacks > 0) {
+                e.bleedTimer = max(0f, e.bleedTimer - delta)
+                if (e.bleedTimer <= 0f) {
+                    e.bleedStacks = 0
+                    e.bleedDpsPerStack = 0f
+                } else {
+                    dps += e.bleedStacks * e.bleedDpsPerStack
+                }
+            }
+            if (dps > 0f) {
+                val dmg = dps * delta
+                e.hp -= dmg
+                if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
+            }
+        }
+    }
+
+    private fun updatePoisonTraps(delta: Float) {
+        if (poisonTraps.isEmpty()) return
+        val lifesteal = progression.getLifeStealPct()
+        val it = poisonTraps.iterator()
+        while (it.hasNext()) {
+            val t = it.next()
+            if (t.armTimer > 0f) {
+                t.armTimer = max(0f, t.armTimer - delta)
+                continue
+            }
+            // Если ещё не активировали облако — ждём триггер по врагу
+            if (t.cloudTimer <= 0f) {
+                val r2 = t.radius * t.radius
+                var triggered = false
+                for (e in enemies) {
+                    if (e.hp <= 0f) continue
+                    val dx = e.pos.x - t.pos.x
+                    val dy = e.pos.y - t.pos.y
+                    if (dx * dx + dy * dy <= r2) {
+                        triggered = true
+                        break
+                    }
+                }
+                if (triggered) {
+                    t.cloudTimer = 3.2f
+                }
+                continue
+            }
+
+            // Облако активно
+            t.cloudTimer = max(0f, t.cloudTimer - delta)
+            val r2 = t.radius * t.radius
+            val dmg = t.dps * delta
+            for (e in enemies) {
+                if (e.hp <= 0f) continue
+                val dx = e.pos.x - t.pos.x
+                val dy = e.pos.y - t.pos.y
+                if (dx * dx + dy * dy <= r2) {
+                    e.hp -= dmg
+                    if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
+                    // Лёгкий слоу пока стоишь в облаке
+                    if (t.slowPct > 0f) {
+                        val mul = (1f - t.slowPct).coerceIn(0.35f, 1f)
+                        e.slowMul = minOf(e.slowMul, mul)
+                        e.slowTimer = max(e.slowTimer, 0.25f)
+                    }
+                }
+            }
+            if (t.cloudTimer <= 0f) it.remove()
+        }
+    }
+
+    private fun enterCharacterSelect() {
+        // Чистим состояние, чтобы на экране выбора не оставалось "хвостов" прошлого забега.
+        runState = RunState.CHARACTER_SELECT
+        runTime = 0f
+        bossSpawned = false
+        playerDamage.reset()
+        playerPos.set(0f, 0f)
+        playerVel.set(0f, 0f)
+
+        progression.reset()
+        progression.setCharacter(selectedCharacter)
+
+        pendingChoices = emptyList()
+        pendingShrineChoices = emptyList()
+        items.clear()
+        itemSystem.reset()
+        loot.reset()
+        shrineSystem.reset()
+
+        enemies.clear()
+        killedEnemies = 0
+        combat.reset()
+        targetingSystem.reset()
+        spawnDirector.reset(initialDelay = Balance.cfg.spawning.spawnDirector.initialDelay)
+
+        uiSystem.layoutCards(uiViewport, optionCount = characterChoices.size, withSkip = false, uiScale = uiScale)
+    }
+
+    private fun enterDifficultySelect() {
+        runState = RunState.DIFFICULTY_SELECT
+        pendingChoices = emptyList()
+        pendingShrineChoices = emptyList()
+        uiSystem.layoutCards(uiViewport, optionCount = difficultyChoices.size, withSkip = false, uiScale = uiScale)
+    }
+
+    private fun applyDifficultyPick(idx: Int) {
+        if (idx < 0 || idx >= difficultyChoices.size) return
+        selectedDifficulty = difficultyChoices[idx]
+        enterCharacterSelect()
+    }
+
+    private fun handleDifficultySelectInput() {
+        val idx = uiSystem.pollKeyPick(runState) ?: return
+        applyDifficultyPick(idx)
+    }
+
+    private fun applyCharacterPick(idx: Int) {
+        if (idx < 0 || idx >= characterChoices.size) return
+        selectedCharacter = characterChoices[idx]
+        resetRun()
+    }
+
+    private fun handleCharacterSelectInput() {
+        val idx = uiSystem.pollKeyPick(runState) ?: return
+        applyCharacterPick(idx)
+    }
+
+    private fun handlePauseInput() {
+        // Space/Esc = продолжить (кнопка в HUD тоже работает)
+        if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.ESCAPE)) {
+            runState = RunState.RUNNING
         }
     }
 
@@ -359,9 +667,10 @@ class GameScreen : ScreenAdapter() {
         playerVel.set(0f, 0f)
 
         progression.reset()
-        progression.weapons += com.factorlite.progression.WeaponInstance(WeaponKind.BLASTER, level = 1)
+        progression.setCharacter(selectedCharacter)
+        // Стартовое оружие персонажа
+        progression.weapons += com.factorlite.progression.WeaponInstance(selectedCharacter.startWeapon, level = 1)
         pendingChoices = emptyList()
-        pendingChestChoices = emptyList()
         pendingShrineChoices = emptyList()
         items.clear()
         itemSystem.reset()
@@ -369,125 +678,141 @@ class GameScreen : ScreenAdapter() {
         shrineSystem.reset()
 
         enemies.clear()
+        killedEnemies = 0
         combat.reset()
         targetingSystem.reset()
-        spawnDirector.reset(initialDelay = 0.2f)
-        uiSystem.layoutCards(uiViewport)
+        spawnDirector.reset(initialDelay = Balance.cfg.spawning.spawnDirector.initialDelay)
+        uiSystem.layoutCards(uiViewport, optionCount = 3, withSkip = false, uiScale = uiScale)
 
         // Стартовая “дыра”, чтобы сразу было что стрелять (через 0.2с спавнится первый враг)
     }
 
     private fun updateSpawns(delta: Float) {
-        val spawns = spawnDirector.update(delta = delta, runTime = runTime, aliveEnemies = enemies.size)
+        // Важно: считать только ЖИВЫХ, иначе спавн “душится” из-за трупов до cleanupDead().
+        val alive = enemies.count { it.hp > 0f }
+        val spawns = spawnDirector.update(delta = delta, runTime = runTime, aliveEnemies = alive, intervalMul = selectedDifficulty.spawnIntervalMul)
         repeat(spawns) {
             spawnEnemy()
         }
     }
 
     private fun spawnEnemy() {
+        val eb = Balance.cfg.spawning.enemy
         // Спавнимся по краям арены (слегка за пределом)
-        val pad = 40f
+        val pad = eb.spawnPad
         val side = MathUtils.random(3)
         val x: Float
         val y: Float
         when (side) {
             0 -> { // left
-                x = -arenaHalfW - pad
+                x = -arenaHalfW + pad
                 y = MathUtils.random(-arenaHalfH, arenaHalfH)
             }
             1 -> { // right
-                x = arenaHalfW + pad
+                x = arenaHalfW - pad
                 y = MathUtils.random(-arenaHalfH, arenaHalfH)
             }
             2 -> { // bottom
                 x = MathUtils.random(-arenaHalfW, arenaHalfW)
-                y = -arenaHalfH - pad
+                y = -arenaHalfH + pad
             }
             else -> { // top
                 x = MathUtils.random(-arenaHalfW, arenaHalfW)
-                y = arenaHalfH + pad
+                y = arenaHalfH - pad
             }
         }
 
         // Тип врага: чем больше runTime, тем чаще быстрые/танки/дальники
-        val pFast = (runTime / 120f).coerceIn(0f, 0.40f)
-        val pTank = (runTime / 150f).coerceIn(0f, 0.28f)
-        val pRanged = (runTime / 180f).coerceIn(0f, 0.28f)
+        val tc = eb.typeChances
+        val pFast = (runTime / tc.fastRampSeconds).coerceIn(0f, tc.fastCap)
+        val pTank = (runTime / tc.tankRampSeconds).coerceIn(0f, tc.tankCap)
+        val pRanged = (runTime / tc.rangedRampSeconds).coerceIn(0f, tc.rangedCap)
         val roll = MathUtils.random()
 
         // Базовая сложность растёт по времени (даже без святынь)
-        val timeMul = 1f + (runTime / runDurationSec).coerceIn(0f, 1f) * 0.70f // к 5:00 ~x1.70
-        val diff = progression.getDifficultyMultiplier() * timeMul
-        val rewardMul = progression.getRewardMultiplier() * (1f + (timeMul - 1f) * 0.35f)
+        val dc = eb.difficulty
+        val timeMul = 1f + (runTime / runDurationSec).coerceIn(0f, 1f) * dc.timeMulBonusAtEnd
+        // HP врагов: домножаем на выбранную сложность (Hard = 1.0 => как сейчас).
+        val diff = progression.getDifficultyMultiplier() * timeMul * selectedDifficulty.enemyHpMul
+        val rewardMul = progression.getRewardMultiplier() * (1f + (timeMul - 1f) * dc.rewardTimeFactor)
 
+        fun scaledSpeed(base: Float): Float = base * (1f + (diff - 1f) * dc.speedDiffFactor)
+
+        val baseStats = eb.base
         val baseEnemy = when {
             roll < pTank ->
                 Enemy(
                     Vector2(x, y),
-                    hp = 70f * diff,
-                    maxHp = 70f * diff,
-                    speed = 80f * (1f + (diff - 1f) * 0.15f),
-                    contactDamage = 12f * diff,
-                    radius = 18f,
-                    xpReward = (3 * rewardMul).toInt().coerceAtLeast(1),
-                    goldReward = (3 * rewardMul).toInt().coerceAtLeast(1),
+                    hp = baseStats.tank.hp * diff,
+                    maxHp = baseStats.tank.hp * diff,
+                    speed = scaledSpeed(baseStats.tank.speed),
+                    contactDamage = baseStats.tank.contactDamage * diff * selectedDifficulty.enemyDamageMul,
+                    radius = baseStats.tank.radius,
+                    xpReward = (baseStats.tank.xp * rewardMul).toInt().coerceAtLeast(1),
+                    goldReward = (baseStats.tank.gold * rewardMul).toInt().coerceAtLeast(1),
                     kind = EnemyKind.TANK,
                 )
             roll < pTank + pFast ->
                 Enemy(
                     Vector2(x, y),
-                    hp = 28f * diff,
-                    maxHp = 28f * diff,
-                    speed = 150f * (1f + (diff - 1f) * 0.15f),
-                    contactDamage = 8f * diff,
-                    radius = 13f,
-                    xpReward = (2 * rewardMul).toInt().coerceAtLeast(1),
-                    goldReward = (2 * rewardMul).toInt().coerceAtLeast(1),
+                    hp = baseStats.fast.hp * diff,
+                    maxHp = baseStats.fast.hp * diff,
+                    speed = scaledSpeed(baseStats.fast.speed),
+                    contactDamage = baseStats.fast.contactDamage * diff * selectedDifficulty.enemyDamageMul,
+                    radius = baseStats.fast.radius,
+                    xpReward = (baseStats.fast.xp * rewardMul).toInt().coerceAtLeast(1),
+                    goldReward = (baseStats.fast.gold * rewardMul).toInt().coerceAtLeast(1),
                     kind = EnemyKind.FAST,
                 )
             roll < pTank + pFast + pRanged ->
                 Enemy(
                     Vector2(x, y),
-                    hp = 34f * diff,
-                    maxHp = 34f * diff,
-                    speed = 92f * (1f + (diff - 1f) * 0.15f),
-                    contactDamage = 8f * diff,
-                    radius = 14f,
-                    xpReward = (2 * rewardMul).toInt().coerceAtLeast(1),
-                    goldReward = (2 * rewardMul).toInt().coerceAtLeast(1),
+                    hp = baseStats.ranged.hp * diff,
+                    maxHp = baseStats.ranged.hp * diff,
+                    speed = scaledSpeed(baseStats.ranged.speed),
+                    contactDamage = baseStats.ranged.contactDamage * diff * selectedDifficulty.enemyDamageMul,
+                    radius = baseStats.ranged.radius,
+                    xpReward = (baseStats.ranged.xp * rewardMul).toInt().coerceAtLeast(1),
+                    goldReward = (baseStats.ranged.gold * rewardMul).toInt().coerceAtLeast(1),
                     kind = EnemyKind.RANGED,
-                    shootCooldown = MathUtils.random(0.2f, 1.0f),
+                    shootCooldown = MathUtils.random(baseStats.ranged.shootCooldownMin, baseStats.ranged.shootCooldownMax),
                 )
             else ->
                 Enemy(
                     Vector2(x, y),
-                    hp = 40f * diff,
-                    maxHp = 40f * diff,
-                    speed = 105f * (1f + (diff - 1f) * 0.15f),
-                    contactDamage = 10f * diff,
-                    radius = 15f,
-                    xpReward = (1 * rewardMul).toInt().coerceAtLeast(1),
-                    goldReward = (1 * rewardMul).toInt().coerceAtLeast(1),
+                    hp = baseStats.normal.hp * diff,
+                    maxHp = baseStats.normal.hp * diff,
+                    speed = scaledSpeed(baseStats.normal.speed),
+                    contactDamage = baseStats.normal.contactDamage * diff * selectedDifficulty.enemyDamageMul,
+                    radius = baseStats.normal.radius,
+                    xpReward = (baseStats.normal.xp * rewardMul).toInt().coerceAtLeast(1),
+                    goldReward = (baseStats.normal.gold * rewardMul).toInt().coerceAtLeast(1),
                     kind = EnemyKind.NORMAL,
                 )
         }
 
         // Элитка: редкий “пик” — сильнее и гарантирует сундук.
-        val pEliteBase = (0.006f + (runTime / 240f) * 0.004f).coerceAtMost(0.02f) // ~0.6% -> 2%
-        val pElite = (pEliteBase * progression.getEliteFrequencyMultiplier()).coerceAtMost(0.08f)
+        val elite = eb.elite
+        val pEliteBase =
+            (elite.pBaseStart + (runTime / elite.rampSeconds) * elite.pBaseRampAdd).coerceAtMost(elite.pBaseCap)
+        val pElite = (pEliteBase * progression.getEliteFrequencyMultiplier()).coerceAtMost(elite.pFinalCap)
         val makeElite = MathUtils.random() < pElite
         val enemy = if (!makeElite) baseEnemy else {
             baseEnemy.copy(
-                hp = baseEnemy.hp * 2.6f,
-                maxHp = baseEnemy.hp * 2.6f,
-                speed = baseEnemy.speed * 1.05f,
-                contactDamage = baseEnemy.contactDamage * 1.35f,
-                radius = baseEnemy.radius * 1.15f,
-                xpReward = baseEnemy.xpReward * 5,
-                goldReward = baseEnemy.goldReward * 6,
+                hp = baseEnemy.hp * elite.hpMul,
+                maxHp = baseEnemy.hp * elite.hpMul,
+                speed = baseEnemy.speed * elite.speedMul,
+                contactDamage = baseEnemy.contactDamage * elite.contactDamageMul,
+                radius = baseEnemy.radius * elite.radiusMul,
+                xpReward = baseEnemy.xpReward * elite.xpMul,
+                goldReward = baseEnemy.goldReward * elite.goldMul,
                 isElite = true,
                 // чуть меньше “раскидываем” дальника, чтобы элитка чаще дралась рядом
-                shootCooldown = if (baseEnemy.kind == EnemyKind.RANGED) MathUtils.random(0.25f, 0.9f) else baseEnemy.shootCooldown,
+                shootCooldown = if (baseEnemy.kind == EnemyKind.RANGED) {
+                    MathUtils.random(elite.rangedShootCooldownMin, elite.rangedShootCooldownMax)
+                } else {
+                    baseEnemy.shootCooldown
+                },
             )
         }
 
@@ -505,7 +830,7 @@ class GameScreen : ScreenAdapter() {
             playerRadius = playerRadius,
             canDamagePlayer = playerDamage.canTakeDamage(),
             onHitPlayer = { dmg ->
-                val res = playerDamage.applyHit(dmg, itemSystem)
+                val res = playerDamage.applyHit(dmg * selectedDifficulty.enemyDamageMul, itemSystem, dodgeChance = progression.getDodgeChance())
                 if (res.died) {
                     runState = RunState.GAME_OVER
                 }
@@ -522,7 +847,7 @@ class GameScreen : ScreenAdapter() {
             val dy = e.pos.y - playerPos.y
             val r = e.radius + playerRadius
             if (dx * dx + dy * dy <= r * r) {
-                val res = playerDamage.applyHit(e.contactDamage, itemSystem)
+                val res = playerDamage.applyHit(e.contactDamage, itemSystem, dodgeChance = progression.getDodgeChance())
                 if (res.died) {
                     runState = RunState.GAME_OVER
                 }
@@ -535,7 +860,6 @@ class GameScreen : ScreenAdapter() {
 
     private fun updateAttacking(delta: Float) {
         val fireRateMul = progression.getFireRateMultiplier()
-        val dmgMul = progression.getDamageMultiplier()
         val critChance = progression.getCritChance()
         val critMul = progression.getCritDamageMultiplier()
 
@@ -545,23 +869,96 @@ class GameScreen : ScreenAdapter() {
             if (w.cooldown > 0f) continue
 
             when (w.kind) {
-                WeaponKind.BLASTER -> {
+                WeaponKind.FROSTSTAFF, WeaponKind.FIRESTAFF -> {
                     val t = targetingSystem.target ?: continue
-                    fireBlaster(w, t, dmgMul, critChance, critMul, fireRateMul)
+                    val dmgMul = progression.getDamageMultiplierForWeapon(w.kind)
+                    fireSingleTargetProjectile(w.kind, w, t, dmgMul, critChance, critMul, fireRateMul)
                 }
 
                 WeaponKind.REVOLVER -> {
+                    val dmgMul = progression.getDamageMultiplierForWeapon(w.kind)
                     fireRevolver(w, dmgMul, critChance, critMul, fireRateMul)
                 }
 
-                WeaponKind.SWORD -> {
-                    swingSword(w, dmgMul, critChance, critMul, fireRateMul)
+                WeaponKind.POISON_TRAP -> {
+                    val t = targetingSystem.target ?: continue
+                    val dmgMul = progression.getDamageMultiplierForWeapon(w.kind)
+                    throwPoisonTrap(w, t, dmgMul, fireRateMul)
+                }
+
+                WeaponKind.POISON_AURA -> {
+                    val dmgMul = progression.getDamageMultiplierForWeapon(w.kind)
+                    tickPoisonAura(w, dmgMul, fireRateMul)
+                }
+
+                WeaponKind.KATANA, WeaponKind.DAGGER -> {
+                    val dmgMul = progression.getDamageMultiplierForWeapon(w.kind)
+                    swingMelee(w.kind, w, dmgMul, critChance, critMul, fireRateMul)
                 }
             }
         }
     }
 
-    private fun fireBlaster(
+    private fun tickPoisonAura(
+        w: com.factorlite.progression.WeaponInstance,
+        dmgMul: Float,
+        fireRateMul: Float,
+    ) {
+        val b = Balance.cfg.weapons.poisonAura
+        val range = b.swingRangeBase + w.rangeLevel * b.swingRangePerLevel
+        val r2 = range * range
+        val baseDmg = b.baseDamage + w.damageLevel * b.damagePerLevel
+        val dmg = baseDmg * dmgMul
+        val slowPct = 0.10f
+
+        val lifesteal = progression.getLifeStealPct()
+        for (e in enemies) {
+            if (e.hp <= 0f) continue
+            val dx = e.pos.x - playerPos.x
+            val dy = e.pos.y - playerPos.y
+            if (dx * dx + dy * dy <= r2) {
+                e.hp -= dmg
+                if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
+                // лёгкий слоу пока в ауре
+                val mul = (1f - slowPct).coerceIn(0.35f, 1f)
+                e.slowMul = minOf(e.slowMul, mul)
+                e.slowTimer = max(e.slowTimer, 0.25f)
+            }
+        }
+
+        val baseCd = b.baseCooldownSec / (1f + b.cooldownLevelFactor * w.cooldownLevel)
+        w.cooldown = baseCd / fireRateMul
+    }
+
+    private fun throwPoisonTrap(
+        w: com.factorlite.progression.WeaponInstance,
+        t: Enemy,
+        dmgMul: Float,
+        fireRateMul: Float,
+    ) {
+        val b = Balance.cfg.weapons.poisonTrap
+        // Ставим ловушку прямо под ближайшего врага (триггер по наступанию).
+        val areaMul = (1f + progression.getInnateAreaSizeBonus()).coerceIn(0.4f, 3.0f)
+        val radius = (70f + w.rangeLevel * 10f) * areaMul
+        val baseDps = (b.baseDamage + w.damageLevel * b.damagePerLevel) * dmgMul
+        val slowPct = 0.12f
+        poisonTraps.add(
+            PoisonTrapCloud(
+                pos = Vector2(t.pos.x, t.pos.y),
+                armTimer = 0.20f,
+                cloudTimer = 0f,
+                radius = radius,
+                dps = baseDps,
+                slowPct = slowPct,
+            ),
+        )
+
+        val baseCd = b.baseCooldownSec / (1f + b.cooldownLevelFactor * w.cooldownLevel)
+        w.cooldown = baseCd / fireRateMul
+    }
+
+    private fun fireSingleTargetProjectile(
+        kind: WeaponKind,
         w: com.factorlite.progression.WeaponInstance,
         t: Enemy,
         dmgMul: Float,
@@ -573,29 +970,38 @@ class GameScreen : ScreenAdapter() {
         if (dir.isZero(0.0001f)) return
         dir.nor()
 
-        val speed = 780f + w.projectileSpeedLevel * 30f
-        val baseDamage = 10f + w.damageLevel * 2.2f
+        val b = when (kind) {
+            WeaponKind.FROSTSTAFF -> Balance.cfg.weapons.froststaff
+            WeaponKind.FIRESTAFF -> Balance.cfg.weapons.firestaff
+            WeaponKind.POISON_TRAP -> Balance.cfg.weapons.poisonTrap
+            else -> Balance.cfg.weapons.froststaff
+        }
+        val speed = b.projectileSpeedBase + w.projectileSpeedLevel * b.projectileSpeedPerLevel
+        val baseDamage = b.baseDamage + w.damageLevel * b.damagePerLevel
         val extra = w.extraLevel
         val count = 1 + extra
-        val spread = 0.10f * (0.88f.pow(w.accuracyLevel.toFloat()))
+        val spread = b.spreadBaseRad * (b.accuracyPowBase.pow(w.accuracyLevel.toFloat()))
         for (i in 0 until count) {
             val angle = (i - (count - 1) / 2f) * spread
             val shotDir = Vector2(dir).rotateRad(angle)
             var dmg = baseDamage * dmgMul
             if (MathUtils.random() < critChance) dmg *= critMul
+            val areaMul = (1f + progression.getInnateAreaSizeBonus()).coerceIn(0.4f, 3.0f)
+            val baseRadius = if (kind == WeaponKind.POISON_TRAP) 5f else 4f
             combat.spawnProjectile(
                 CombatSystem.Projectile(
                     pos = Vector2(playerPos.x, playerPos.y),
                     vel = shotDir.scl(speed),
                     damage = dmg,
-                    source = WeaponKind.BLASTER,
+                    radius = baseRadius * areaMul,
+                    source = kind,
                     pierceLeft = w.pierceLevel,
                     ricochetLeft = w.ricochetLevel,
                 ),
             )
         }
 
-        val baseCd = 0.35f / (1f + 0.08f * w.cooldownLevel)
+        val baseCd = b.baseCooldownSec / (1f + b.cooldownLevelFactor * w.cooldownLevel)
         w.cooldown = baseCd / fireRateMul
     }
 
@@ -609,12 +1015,13 @@ class GameScreen : ScreenAdapter() {
         // Стреляет несколькими пулями по ближайшим целям
         if (enemies.isEmpty()) return
 
+        val b = Balance.cfg.weapons.revolver
         val shots = (1 + w.extraLevel).coerceIn(1, 7)
-        val candidates = pickNearestEnemies(shots, range = 560f)
+        val candidates = pickNearestEnemies(shots, range = b.targetAcquireRange)
         if (candidates.isEmpty()) return
 
-        val speed = 820f + w.projectileSpeedLevel * 32f
-        val baseDamage = 7.5f + w.damageLevel * 1.6f
+        val speed = b.projectileSpeedBase + w.projectileSpeedLevel * b.projectileSpeedPerLevel
+        val baseDamage = b.baseDamage + w.damageLevel * b.damagePerLevel
 
         for (e in candidates) {
             val dir = Vector2(e.pos.x - playerPos.x, e.pos.y - playerPos.y)
@@ -634,11 +1041,12 @@ class GameScreen : ScreenAdapter() {
             )
         }
 
-        val baseCd = 0.65f / (1f + 0.08f * w.cooldownLevel)
+        val baseCd = b.baseCooldownSec / (1f + b.cooldownLevelFactor * w.cooldownLevel)
         w.cooldown = baseCd / fireRateMul
     }
 
-    private fun swingSword(
+    private fun swingMelee(
+        kind: WeaponKind,
         w: com.factorlite.progression.WeaponInstance,
         dmgMul: Float,
         critChance: Float,
@@ -646,16 +1054,37 @@ class GameScreen : ScreenAdapter() {
         fireRateMul: Float,
     ) {
         // Ближняя атака по нескольким ближайшим в радиусе
-        val range = 110f + w.rangeLevel * 8f + w.pierceLevel * 18f
+        val b = when (kind) {
+            WeaponKind.KATANA -> Balance.cfg.weapons.katana
+            WeaponKind.DAGGER -> Balance.cfg.weapons.dagger
+            WeaponKind.POISON_AURA -> Balance.cfg.weapons.poisonAura
+            else -> Balance.cfg.weapons.katana
+        }
+        val range = b.swingRangeBase + w.rangeLevel * b.swingRangePerLevel + w.pierceLevel * b.pierceRangePerLevel
         val hits = (1 + w.extraLevel).coerceIn(1, 8)
         val candidates = pickNearestEnemies(hits, range = range)
         if (candidates.isEmpty()) return
 
-        val baseDamage = 14f + w.damageLevel * 3.0f
+        val baseDamage = b.baseDamage + w.damageLevel * b.damagePerLevel
         for (e in candidates) {
             var dmg = baseDamage * dmgMul
             if (MathUtils.random() < critChance) dmg *= critMul
             e.hp -= dmg
+            val lifesteal = progression.getLifeStealPct()
+            if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
+
+            if (kind == WeaponKind.DAGGER) {
+                // Кровотечение по шансy
+                val proc = 0.28f
+                if (MathUtils.random() < proc) {
+                    val maxStacks = 5
+                    val dur = 3.0f
+                    e.bleedStacks = (e.bleedStacks + 1).coerceAtMost(maxStacks)
+                    e.bleedTimer = dur
+                    val perStack = (dmg * 0.22f).coerceAtLeast(0.4f)
+                    e.bleedDpsPerStack = max(e.bleedDpsPerStack, perStack)
+                }
+            }
             itemSystem.onEnemyHit(
                 hit = e,
                 playerPos = playerPos,
@@ -666,7 +1095,7 @@ class GameScreen : ScreenAdapter() {
             )
         }
 
-        val baseCd = 0.85f / (1f + 0.08f * w.cooldownLevel)
+        val baseCd = b.baseCooldownSec / (1f + b.cooldownLevelFactor * w.cooldownLevel)
         w.cooldown = baseCd / fireRateMul
     }
 
@@ -710,6 +1139,7 @@ class GameScreen : ScreenAdapter() {
     }
 
     private fun updateProjectiles(delta: Float) {
+        val lifesteal = progression.getLifeStealPct()
         combat.updatePlayerProjectiles(
             delta = delta,
             arenaHalfW = arenaHalfW,
@@ -718,14 +1148,21 @@ class GameScreen : ScreenAdapter() {
             isAlive = { it.hp > 0f },
             getPos = { it.pos },
             getRadius = { it.radius },
-            damageEnemy = { e, dmg -> e.hp -= dmg },
-            onEnemyHit = { e ->
+            damageEnemy = { e, dmg ->
+                e.hp -= dmg
+                if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
+            },
+            onEnemyHit = { e, source, dmg ->
+                applyWeaponOnHit(source = source, enemy = e, hitDamage = dmg)
                 itemSystem.onEnemyHit(
                     hit = e,
                     playerPos = playerPos,
                     isAlive = { it.hp > 0f },
                     getPos = { it.pos },
-                    damageEnemy = { en, d -> en.hp -= d },
+                    damageEnemy = { en, d ->
+                        en.hp -= d
+                        if (lifesteal > 0f) playerDamage.heal(d * lifesteal)
+                    },
                     findNearest = ::findNearestEnemyFromPointExcludingVisited,
                 )
             },
@@ -733,6 +1170,30 @@ class GameScreen : ScreenAdapter() {
                 findNearestEnemyFromPointExcludingVisited(fromX, fromY, setOf(System.identityHashCode(exclude)), maxRange2)
             },
         )
+    }
+
+    private fun applyWeaponOnHit(source: WeaponKind, enemy: Enemy, hitDamage: Float) {
+        if (enemy.hp <= 0f) return
+        when (source) {
+            WeaponKind.FROSTSTAFF -> {
+                // Слоу по попаданию
+                val slowPct = 0.22f
+                val slowSec = 1.20f
+                val mul = (1f - slowPct).coerceIn(0.35f, 1f)
+                enemy.slowMul = minOf(enemy.slowMul, mul)
+                enemy.slowTimer = max(enemy.slowTimer, slowSec)
+            }
+            WeaponKind.FIRESTAFF -> {
+                // Горение стакается
+                val maxStacks = 6
+                val dur = 2.8f
+                enemy.burnStacks = (enemy.burnStacks + 1).coerceAtMost(maxStacks)
+                enemy.burnTimer = dur
+                val perStack = (hitDamage * 0.35f).coerceAtLeast(0.5f)
+                enemy.burnDpsPerStack = max(enemy.burnDpsPerStack, perStack)
+            }
+            else -> Unit
+        }
     }
 
     private fun findNearestEnemyExcluding(exclude: Enemy, maxRange: Float): Enemy? {
@@ -759,6 +1220,7 @@ class GameScreen : ScreenAdapter() {
         var bossDied = false
         for (e in enemies) {
             if (e.hp <= 0f) {
+                killedEnemies += 1
                 if (e.isBoss) bossDied = true
                 loot.onEnemyKilled(
                     pos = e.pos,
@@ -826,53 +1288,92 @@ class GameScreen : ScreenAdapter() {
 
         batch.begin()
         font.color = Color.WHITE
-        font.draw(
-            batch,
-            "HP: ${playerDamage.hp.toInt()}   Lvl: ${progression.level}  XP: ${progression.xp}/${progression.xpToNext}   Gold: ${loot.gold}   Time: ${runTime.toInt()}s   Enemies: ${enemies.size}",
-            16f,
-            uiViewport.worldHeight - 16f,
+        val s = uiScale.coerceIn(1.0f, 2.0f)
+        val padX = 16f * s
+        val top = uiViewport.worldHeight - 16f * s
+        val maxW = (uiViewport.worldWidth - padX * 2f).coerceAtLeast(100f)
+        val gap = 8f * s
+
+        fun drawWrapped(text: String, x: Float, yTop: Float): Float {
+            // Возвращает новую Y-координату (верх следующего блока), уже со смещением вниз.
+            glyph.setText(font, text, Color.WHITE, maxW, Align.left, true)
+            font.draw(batch, glyph, x, yTop)
+            return yTop - glyph.height - gap
+        }
+
+        var y = top
+        y = drawWrapped(
+            "HP: ${playerDamage.hp.toInt()}   LVL: ${progression.level}   GOLD: ${loot.gold}   Time: ${runTime.toInt()}s   Kills: $killedEnemies",
+            padX,
+            y,
         )
 
-        // Слоты (2 оружия + 2 пассивки)
-        val line1 = buildString {
+        val lineWeapon = buildString {
             append("Оружие: ")
             if (progression.weapons.isEmpty()) append("-")
             for ((i, w) in progression.weapons.withIndex()) {
                 if (i > 0) append(" | ")
-                append(
-                    "${w.kind.uiName} " +
-                        "D${w.damageLevel} F${w.cooldownLevel} S${w.projectileSpeedLevel} A${w.accuracyLevel} R${w.rangeLevel} " +
-                        "E${w.extraLevel} Rc${w.ricochetLevel} P${w.pierceLevel}",
-                )
+                val up = (w.level - 1).coerceAtLeast(0)
+                append("${w.kind.uiName} Lv$up")
             }
         }
-        val line2 = buildString {
-            append("Пассивки: ")
-            if (progression.passives.isEmpty()) append("-")
-            for ((i, p) in progression.passives.withIndex()) {
-                if (i > 0) append(" | ")
-                append("${p.kind.uiName} Lv${p.level}")
-            }
-        }
-        font.draw(batch, line1, 16f, uiViewport.worldHeight - 40f)
-        font.draw(batch, line2, 16f, uiViewport.worldHeight - 64f)
+        y = drawWrapped(lineWeapon, padX, y)
 
-        val line3 = buildString {
-            append("Предметы: ")
-            if (itemSystem.items.isEmpty()) append("-")
-            for ((i, it) in itemSystem.items.withIndex()) {
+        val lineRings = buildString {
+            append("Кольца: ")
+            if (progression.rings.isEmpty()) append("-")
+            for ((i, p) in progression.rings.withIndex()) {
                 if (i > 0) append(" | ")
-                append(it.kind.name)
+                val up = (p.level - 1).coerceAtLeast(0)
+                append("${p.kind.uiName} Lv$up")
             }
         }
-        font.draw(batch, line3, 16f, uiViewport.worldHeight - 88f)
+        y = drawWrapped(lineRings, padX, y)
+
+        val lineItems = buildString {
+            append("Предметы: ")
+            if (itemSystem.items.isEmpty()) {
+                append("-")
+            } else {
+                val counts = LinkedHashMap<com.factorlite.loot.ItemKind, Int>()
+                for (it in itemSystem.items) {
+                    counts[it.kind] = (counts[it.kind] ?: 0) + 1
+                }
+                var i = 0
+                for ((k, n) in counts) {
+                    if (i++ > 0) append(" | ")
+                    append("${k.uiName} x$n")
+                }
+            }
+        }
+        y = drawWrapped(lineItems, padX, y)
+
+        // Кнопка паузы (справа сверху, но под HUD-текстом)
+        val hudUsed = (top - y).coerceAtLeast(0f)
+        val pauseSize = 44f * s
+        pauseRect.set(
+            uiViewport.worldWidth - 16f * s - pauseSize,
+            (uiViewport.worldHeight - 16f * s - pauseSize - hudUsed).coerceAtLeast(16f * s),
+            pauseSize,
+            pauseSize,
+        )
+        batch.end()
+        shapes.projectionMatrix = uiCamera.combined
+        shapes.begin(ShapeRenderer.ShapeType.Filled)
+        shapes.color = Color(0f, 0f, 0f, 0.45f)
+        shapes.rect(pauseRect.x, pauseRect.y, pauseRect.width, pauseRect.height)
+        shapes.end()
+        batch.begin()
+        font.color = Color.WHITE
+        val pauseLabel = if (runState == RunState.PAUSED) ">" else "||"
+        font.draw(batch, pauseLabel, pauseRect.x + 14f * s, pauseRect.y + 30f * s)
 
         // Миникарта (справа сверху)
-        drawMiniMap()
+        drawMiniMap(topOffset = hudUsed + 8f)
 
         // Босс-бар (если жив)
         enemies.firstOrNull { it.isBoss }?.let { boss ->
-            drawBossBar(boss)
+            drawBossBar(boss, topOffset = hudUsed + 8f)
         }
 
         when (runState) {
@@ -888,15 +1389,30 @@ class GameScreen : ScreenAdapter() {
                 font.color = Color.WHITE
                 font.draw(batch, "Press R / Space to restart", uiViewport.worldWidth / 2f - 110f, uiViewport.worldHeight / 2f - 16f)
             }
-            RunState.LEVEL_UP -> uiSystem.drawLevelUpOverlay(batch, shapes, font, uiViewport, uiCamera, pendingChoices)
-            RunState.CHEST_OPEN -> uiSystem.drawChestOverlay(batch, shapes, font, uiViewport, uiCamera, pendingChestChoices)
-            RunState.SHRINE_OPEN -> uiSystem.drawShrineOverlay(batch, shapes, font, uiViewport, uiCamera, pendingShrineChoices)
+            RunState.LEVEL_UP -> uiSystem.drawLevelUpOverlay(batch, shapes, font, uiViewport, uiCamera, pendingChoices, uiScale = uiScale)
+            RunState.SHRINE_OPEN -> uiSystem.drawShrineOverlay(batch, shapes, font, uiViewport, uiCamera, pendingShrineChoices, uiScale = uiScale)
+            RunState.CHARACTER_SELECT -> uiSystem.drawCharacterSelectOverlay(batch, shapes, font, uiViewport, uiCamera, characterChoices, uiScale = uiScale)
+            RunState.DIFFICULTY_SELECT -> uiSystem.drawDifficultySelectOverlay(
+                batch,
+                shapes,
+                font,
+                uiViewport,
+                uiCamera,
+                difficultyChoices.map { it.uiName to it.description },
+                uiScale = uiScale,
+            )
+            RunState.PAUSED -> {
+                font.color = Color.WHITE
+                font.draw(batch, "PAUSE", uiViewport.worldWidth / 2f - 40f, uiViewport.worldHeight / 2f + 10f)
+                font.color = Color.LIGHT_GRAY
+                font.draw(batch, "Tap > / Space / Esc", uiViewport.worldWidth / 2f - 90f, uiViewport.worldHeight / 2f - 16f)
+            }
             else -> Unit
         }
         batch.end()
     }
 
-    private fun drawMiniMap() {
+    private fun drawMiniMap(topOffset: Float = 0f) {
         // batch уже в begin()
         batch.end()
         shapes.projectionMatrix = uiCamera.combined
@@ -904,9 +1420,10 @@ class GameScreen : ScreenAdapter() {
 
         val uiW = uiViewport.worldWidth
         val uiH = uiViewport.worldHeight
-        val radius = 68f
+        // Если HUD занял много места, уменьшаем миникарту и сдвигаем ниже.
+        val radius = (68f - topOffset * 0.25f).coerceIn(42f, 68f)
         val cx = uiW - radius - 16f
-        val cy = uiH - radius - 16f
+        val cy = uiH - radius - 16f - topOffset
 
         // фон
         shapes.color = Color(0f, 0f, 0f, 0.45f)
@@ -948,14 +1465,14 @@ class GameScreen : ScreenAdapter() {
         batch.begin()
     }
 
-    private fun drawBossBar(boss: Enemy) {
+    private fun drawBossBar(boss: Enemy, topOffset: Float = 0f) {
         batch.end()
         shapes.projectionMatrix = uiCamera.combined
         shapes.begin(ShapeRenderer.ShapeType.Filled)
 
         val w = uiViewport.worldWidth
         val x = w * 0.18f
-        val y = uiViewport.worldHeight - 78f
+        val y = (uiViewport.worldHeight - 78f - topOffset).coerceAtLeast(24f)
         val bw = w * 0.64f
         val bh = 14f
         val t = (boss.hp / boss.maxHp).coerceIn(0f, 1f)
@@ -984,18 +1501,21 @@ class GameScreen : ScreenAdapter() {
         combat.enemyProjectiles.clear()
 
         // Чуть чистим сундуки, чтобы не было "ковра" в фазе босса
-        loot.chests.removeAll { !it.isElite }
+        val bossCfg = Balance.cfg.spawning.enemy.boss
+        if (bossCfg.cleanupChestsKeepEliteOnly) {
+            loot.chests.removeAll { !it.isElite }
+        }
 
         val diff = progression.getDifficultyMultiplier()
-        val bossHp = 5200f * diff
+        val bossHp = bossCfg.hp * diff
         enemies.add(
             Enemy(
-                pos = Vector2(playerPos.x + 360f, playerPos.y),
+                pos = Vector2(playerPos.x + bossCfg.spawnOffsetX, playerPos.y),
                 hp = bossHp,
                 maxHp = bossHp,
-                speed = 78f,
-                contactDamage = 22f * diff,
-                radius = 26f,
+                speed = bossCfg.speed,
+                contactDamage = bossCfg.contactDamage * diff,
+                radius = bossCfg.radius,
                 xpReward = 0,
                 goldReward = 0,
                 kind = EnemyKind.TANK,
@@ -1010,13 +1530,6 @@ class GameScreen : ScreenAdapter() {
         val idx = uiSystem.pollKeyPick(runState) ?: return
         if (idx >= pendingChoices.size) return
         applyLevelUpChoice(idx)
-    }
-
-    private fun handleChestInput() {
-        // Для Desktop отладки: 1/2/3
-        val idx = uiSystem.pollKeyPick(runState) ?: return
-        if (idx >= pendingChestChoices.size) return
-        applyChestChoice(idx)
     }
 
     private fun handleShrineInput() {
@@ -1041,15 +1554,6 @@ class GameScreen : ScreenAdapter() {
 
     // Отрисовка оверлеев/карточек вынесена в RunUiSystem
 
-    private fun applyChestChoice(idx: Int) {
-        if (idx < 0 || idx >= pendingChestChoices.size) return
-        val chosen = pendingChestChoices[idx].item
-        items.add(chosen)
-        itemSystem.addItem(chosen)
-        pendingChestChoices = emptyList()
-        runState = RunState.RUNNING
-    }
-
     private fun applyShrineChoice(idx: Int) {
         if (idx < 0 || idx >= pendingShrineChoices.size) return
         progression.applyGlobalBonus(pendingShrineChoices[idx])
@@ -1071,12 +1575,25 @@ class GameScreen : ScreenAdapter() {
         // Продуктовый подход: не зависим от системных путей (Windows/Android),
         // всегда грузим из ассетов. Общая папка `assets/` подключена в Gradle
         // для Desktop и Android, так что Gdx.files.internal(...) работает везде одинаково.
-        val ttf = Gdx.files.internal("fonts/Roboto-Regular.ttf")
-        if (!ttf.exists()) {
+        val preferred = Gdx.files.internal("fonts/Roboto-Regular.ttf")
+        val ttf = if (preferred.exists()) {
+            preferred
+        } else {
+            // Фоллбек: если имя отличается, но шрифт положили в assets/fonts — найдём любой ttf/otf.
+            val dir = Gdx.files.internal("fonts")
+            if (dir.exists() && dir.isDirectory) {
+                dir.list()
+                    .firstOrNull { it.extension().equals("ttf", ignoreCase = true) || it.extension().equals("otf", ignoreCase = true) }
+            } else {
+                null
+            }
+        }
+
+        if (ttf == null || !ttf.exists()) {
             Gdx.app?.error(
                 "Font",
-                "Missing assets font: fonts/Roboto-Regular.ttf. " +
-                    "Add it under repo root assets/fonts/Roboto-Regular.ttf. Falling back to BitmapFont().",
+                "Missing assets font under fonts/. " +
+                    "Put Roboto-Regular.ttf into assets/fonts/ (or run tools/download_fonts.ps1). Falling back to BitmapFont().",
             )
             // Фоллбек: будет без кириллицы, но хотя бы не упадём.
             font = BitmapFont()
@@ -1085,7 +1602,7 @@ class GameScreen : ScreenAdapter() {
 
         val gen = FreeTypeFontGenerator(ttf)
         try {
-            val size = (uiViewport.screenHeight * 0.028f).toInt().coerceIn(14, 28)
+            val size = (uiViewport.screenHeight * 0.028f * uiScale).toInt().coerceIn(16, 42)
             val param = FreeTypeFontGenerator.FreeTypeFontParameter().apply {
                 this.size = size
                 color = Color.WHITE
