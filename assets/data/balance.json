@@ -152,9 +152,9 @@
         "ranged": { "hp": 34.0, "speed":  92.0, "contactDamage":  8.0, "radius": 14.0, "xp": 2, "gold": 2, "shootCooldownMin": 0.2, "shootCooldownMax": 1.0 }
       },
       "rangedCombat": {
-        "desiredMinDist": 240.0,
-        "desiredMaxDist": 420.0,
-        "shootRange": 500.0,
+        "desiredMinDist": 120.0,
+        "desiredMaxDist": 240.0,
+        "shootRange": 250.0,
         "projectileSpeed": 360.0,
         "projectileRadius": 5.0,
         "baseDamage": 5.8,

@@ -304,9 +304,11 @@ data class RangedEnemyStats(
 )
 
 data class RangedCombatBalance(
-    val desiredMinDist: Float = 240f,
-    val desiredMaxDist: Float = 420f,
-    val shootRange: Float = 520f,
+    // Дальники: держат дистанцию в пределах, где могут стрелять.
+    // Если shootRange уменьшить, важно уменьшать и desiredMaxDist, иначе дальник будет стоять "слишком далеко" и не стрелять.
+    val desiredMinDist: Float = 120f,
+    val desiredMaxDist: Float = 240f,
+    val shootRange: Float = 260f,
     val projectileSpeed: Float = 420f,
     val projectileRadius: Float = 5f,
     val baseDamage: Float = 9f,

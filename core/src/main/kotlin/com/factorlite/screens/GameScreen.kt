@@ -15,6 +15,7 @@ import com.badlogic.gdx.math.Interpolation
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Rectangle
 import com.badlogic.gdx.math.Vector2
+import com.badlogic.gdx.Preferences
 import com.badlogic.gdx.utils.Align
 import com.badlogic.gdx.utils.viewport.FitViewport
 import com.badlogic.gdx.utils.viewport.ScreenViewport
@@ -37,6 +38,7 @@ import com.factorlite.loot.uiName
 import com.factorlite.screens.RunUiSystem
 import com.factorlite.content.Balance
 import com.factorlite.gfx.Sprites
+import com.factorlite.FactorLiteGame
 import com.factorlite.progression.GlobalBonusOption
 import com.factorlite.progression.CharacterKind
 import com.factorlite.progression.playerSpriteKey
@@ -44,11 +46,15 @@ import com.factorlite.progression.RunProgression
 import com.factorlite.progression.UpgradeOption
 import com.factorlite.progression.WeaponKind
 import com.factorlite.progression.uiName
+import kotlin.math.atan2
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.sin
 import kotlin.math.sqrt
+import java.util.Locale
 
-class GameScreen : ScreenAdapter() {
+class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
     private val runDurationSec = 5f * 60f
     private var bossSpawned = false
 
@@ -70,14 +76,12 @@ class GameScreen : ScreenAdapter() {
     private val glyph = GlyphLayout()
     private var fatalErrorText: String? = null
 
-    // Глобальный скейл интерфейса под телефон (HUD + карточки).
-    // Если захочешь — вынесем в баланс/настройки.
-    private val uiScale: Float = 1.45f
+    // Базовый скейл интерфейса (на “референсном” разрешении 540x960).
+    // Итоговый скейл пересчитывается от реального разрешения: см. recalcUiScale().
+    private val baseUiScale: Float = 1.45f
+    private var uiScale: Float = baseUiScale
 
-    private val joystick = FloatingJoystick(
-        deadzonePx = 12f,
-        radiusPx = 110f,
-    )
+    private lateinit var joystick: FloatingJoystick
     private val inputMux = InputMultiplexer()
     private lateinit var uiTapInput: InputAdapter
     private val uiSystem = RunUiSystem()
@@ -100,16 +104,46 @@ class GameScreen : ScreenAdapter() {
     private var selectedCharacter: CharacterKind = CharacterKind.FROZKA
     private val characterChoices: List<CharacterKind> = CharacterKind.entries.toList()
 
+    private val prefs: Preferences by lazy { Gdx.app.getPreferences("factorlite_prefs") }
+    private val prefKeyDifficulty = "difficulty"
+    private val prefKeyCharacter = "character"
+
     private enum class DifficultyKind(
         val uiName: String,
         val description: String,
+        val biomeName: String,
+        val worldTextureKey: String,
         val enemyHpMul: Float,
         val enemyDamageMul: Float,
         val spawnIntervalMul: Float,
     ) {
-        EASY("Лёгкая", "Меньше врагов и урона.", enemyHpMul = 0.85f, enemyDamageMul = 0.80f, spawnIntervalMul = 1.25f),
-        MEDIUM("Средняя", "Чуть проще, чем сейчас.", enemyHpMul = 0.92f, enemyDamageMul = 0.90f, spawnIntervalMul = 1.10f),
-        HARD("Сложная", "Текущая (как сейчас).", enemyHpMul = 1.00f, enemyDamageMul = 1.00f, spawnIntervalMul = 1.00f),
+        EASY(
+            "Лёгкая",
+            "Проще пережить старт и разогнаться.",
+            biomeName = "Лесная полянка",
+            worldTextureKey = "bg_forest",
+            enemyHpMul = 0.85f,
+            enemyDamageMul = 0.80f,
+            spawnIntervalMul = 1.25f,
+        ),
+        MEDIUM(
+            "Средняя",
+            "Чуть проще, чем сейчас.",
+            biomeName = "Пустыня",
+            worldTextureKey = "bg_desert",
+            enemyHpMul = 0.92f,
+            enemyDamageMul = 0.90f,
+            spawnIntervalMul = 1.10f,
+        ),
+        HARD(
+            "Сложная",
+            "Текущая (как сейчас).",
+            biomeName = "Зимний биом",
+            worldTextureKey = "bg_winter",
+            enemyHpMul = 1.00f,
+            enemyDamageMul = 1.00f,
+            spawnIntervalMul = 1.00f,
+        ),
     }
 
     private var selectedDifficulty: DifficultyKind = DifficultyKind.HARD
@@ -118,6 +152,8 @@ class GameScreen : ScreenAdapter() {
     // Пауза: кнопка в правом верхнем углу HUD
     private val pauseRect = Rectangle()
     private lateinit var pauseInput: InputAdapter
+    private val pauseContinueRect = Rectangle()
+    private val pauseMenuRect = Rectangle()
 
     private var pendingShrineChoices: List<GlobalBonusOption> = emptyList()
     private val items = ArrayList<ItemInstance>()
@@ -145,11 +181,69 @@ class GameScreen : ScreenAdapter() {
 
     private val spawnDirector = SpawnDirector()
 
+    // --- Визуальные FX ближней атаки (катана/кинжал) ---
+    private data class MeleeSlashFx(
+        var x: Float,
+        var y: Float,
+        var rotDeg: Float,
+        var timeLeft: Float,
+        var duration: Float,
+        var length: Float,
+        var width: Float,
+        var r: Float,
+        var g: Float,
+        var b: Float,
+    )
+
+    private val meleeFx: MutableList<MeleeSlashFx> = ArrayList()
+
+    // --- Вылетающие цифры урона ---
+    private data class DamageNumberFx(
+        var x: Float,
+        var y: Float,
+        val value: Int,
+        var timeLeft: Float,
+        val duration: Float,
+        val r: Float,
+        val g: Float,
+        val b: Float,
+    )
+
+    private val damageNumbers: MutableList<DamageNumberFx> = ArrayList()
+
+    private fun spawnDamageNumber(x: Float, y: Float, dmg: Float, crit: Boolean = false) {
+        val v = dmg.toInt().coerceAtLeast(1)
+        val ox = MathUtils.random(-6f, 6f)
+        val oy = MathUtils.random(0f, 10f)
+        val r = if (crit) 1.0f else 1.0f
+        val g = if (crit) 0.86f else 1.0f
+        val b = if (crit) 0.25f else 1.0f
+        damageNumbers.add(
+            DamageNumberFx(
+                x = x + ox,
+                y = y + oy,
+                value = v,
+                timeLeft = 0.65f,
+                duration = 0.65f,
+                r = r,
+                g = g,
+                b = b,
+            ),
+        )
+        // Не даём разрастаться бесконечно (на всякий).
+        if (damageNumbers.size > 90) {
+            damageNumbers.subList(0, 30).clear()
+        }
+    }
+
     // Простая арена (пока) — под портретное окно.
     private val arenaHalfW = 520f
     private val arenaHalfH = 920f
 
     override fun show() {
+        // setScreen(...) может произойти до первого resize(), поэтому обновим вьюпорты вручную.
+        viewport.update(Gdx.graphics.width, Gdx.graphics.height, true)
+        uiViewport.update(Gdx.graphics.width, Gdx.graphics.height, true)
         inputMux.clear()
         uiTapInput = uiSystem.createTapInput(
             uiViewport = uiViewport,
@@ -183,9 +277,36 @@ class GameScreen : ScreenAdapter() {
 
         pauseInput = object : InputAdapter() {
             override fun touchDown(screenX: Int, screenY: Int, pointer: Int, button: Int): Boolean {
-                if (runState != RunState.RUNNING && runState != RunState.PAUSED) return false
+                if (runState != RunState.RUNNING &&
+                    runState != RunState.PAUSED &&
+                    runState != RunState.VICTORY &&
+                    runState != RunState.GAME_OVER
+                ) {
+                    return false
+                }
                 tmpVec.set(screenX.toFloat(), screenY.toFloat())
                 uiViewport.unproject(tmpVec)
+
+                if (runState == RunState.PAUSED || runState == RunState.VICTORY || runState == RunState.GAME_OVER) {
+                    layoutPauseMenu()
+                    if (pauseContinueRect.contains(tmpVec.x, tmpVec.y)) {
+                        if (runState == RunState.PAUSED) {
+                            runState = RunState.RUNNING
+                        } else {
+                            // Победа/поражение: рестарт за того же персонажа/сложность
+                            resetRun()
+                        }
+                        return true
+                    }
+                    if (pauseMenuRect.contains(tmpVec.x, tmpVec.y)) {
+                        // Безопасно переключаем экран после обработки ввода.
+                        Gdx.app.postRunnable {
+                            game.setScreen(MainMenuScreen(game))
+                        }
+                        return true
+                    }
+                }
+
                 if (pauseRect.contains(tmpVec.x, tmpVec.y)) {
                     runState = if (runState == RunState.RUNNING) RunState.PAUSED else RunState.RUNNING
                     return true
@@ -194,17 +315,160 @@ class GameScreen : ScreenAdapter() {
             }
         }
 
+        recalcUiScale()
+        joystick = FloatingJoystick(
+            deadzonePx = 12f * uiScale,
+            radiusPx = 110f * uiScale,
+        )
+
         inputMux.addProcessor(uiTapInput)
         inputMux.addProcessor(pauseInput)
         inputMux.addProcessor(joystick)
         Gdx.input.inputProcessor = inputMux
         rebuildFont()
+        loadSelectionsFromPrefs()
         enterDifficultySelect()
+    }
+
+    override fun hide() {
+        // Чтобы старый Screen не продолжал принимать клики.
+        if (Gdx.input.inputProcessor === inputMux) {
+            Gdx.input.inputProcessor = null
+        }
+    }
+
+    private fun layoutPauseMenu() {
+        val s = uiScale.coerceIn(0.9f, 3.5f)
+        val w = uiViewport.worldWidth
+        val h = uiViewport.worldHeight
+        val bw = (w * 0.64f).coerceIn(240f * s, 520f * s)
+        val bh = (76f * s).coerceIn(54f * s, 92f * s)
+        val gap = 16f * s
+        val cx = w / 2f
+        val topY = h / 2f + (bh + gap) * 0.5f
+        pauseContinueRect.set(cx - bw / 2f, topY, bw, bh)
+        pauseMenuRect.set(cx - bw / 2f, topY - (bh + gap), bw, bh)
+    }
+
+    private fun drawPauseMenuOverlay() {
+        layoutPauseMenu()
+        // затемнение + кнопки
+        batch.end()
+        shapes.projectionMatrix = uiCamera.combined
+        shapes.begin(ShapeRenderer.ShapeType.Filled)
+        shapes.color = Color(0f, 0f, 0f, 0.55f)
+        shapes.rect(0f, 0f, uiViewport.worldWidth, uiViewport.worldHeight)
+
+        fun btn(r: Rectangle, col: Color) {
+            shapes.color = col
+            shapes.rect(r.x, r.y, r.width, r.height)
+            shapes.color = Color(0f, 0f, 0f, 0.22f)
+            shapes.rect(r.x, r.y, r.width, 2f * uiScale)
+            shapes.rect(r.x, r.y + r.height - 2f * uiScale, r.width, 2f * uiScale)
+        }
+        btn(pauseContinueRect, Color(0.10f, 0.45f, 0.22f, 0.92f))
+        btn(pauseMenuRect, Color(0.12f, 0.12f, 0.16f, 0.92f))
+        shapes.end()
+
+        batch.begin()
+        // текст
+        val baseX = font.data.scaleX
+        val baseY = font.data.scaleY
+        // чуть крупнее для меню
+        font.data.setScale(baseX * 1.05f, baseY * 1.05f)
+        font.color = Color.WHITE
+        glyph.setText(font, "ПАУЗА")
+        font.draw(batch, glyph, (uiViewport.worldWidth - glyph.width) / 2f, pauseContinueRect.y + pauseContinueRect.height + 40f * uiScale)
+
+        fun labelCentered(r: Rectangle, text: String) {
+            glyph.setText(font, text, Color.WHITE, r.width, Align.center, false)
+            val y = r.y + r.height / 2f + glyph.height / 2f
+            font.draw(batch, glyph, r.x, y)
+        }
+        labelCentered(pauseContinueRect, "Продолжить")
+        labelCentered(pauseMenuRect, "В главное меню")
+        font.data.setScale(baseX, baseY)
+    }
+
+    private fun drawEndRunMenuOverlay(title: String, titleColor: Color) {
+        layoutPauseMenu()
+        // затемнение + кнопки
+        batch.end()
+        shapes.projectionMatrix = uiCamera.combined
+        shapes.begin(ShapeRenderer.ShapeType.Filled)
+        shapes.color = Color(0f, 0f, 0f, 0.60f)
+        shapes.rect(0f, 0f, uiViewport.worldWidth, uiViewport.worldHeight)
+
+        fun btn(r: Rectangle, col: Color) {
+            shapes.color = col
+            shapes.rect(r.x, r.y, r.width, r.height)
+            shapes.color = Color(0f, 0f, 0f, 0.22f)
+            shapes.rect(r.x, r.y, r.width, 2f * uiScale)
+            shapes.rect(r.x, r.y + r.height - 2f * uiScale, r.width, 2f * uiScale)
+        }
+        btn(pauseContinueRect, Color(0.10f, 0.45f, 0.22f, 0.92f))
+        btn(pauseMenuRect, Color(0.12f, 0.12f, 0.16f, 0.92f))
+        shapes.end()
+
+        batch.begin()
+
+        val baseX = font.data.scaleX
+        val baseY = font.data.scaleY
+        font.data.setScale(baseX * 1.10f, baseY * 1.10f)
+        glyph.setText(font, title)
+        font.color = titleColor
+        font.draw(batch, glyph, (uiViewport.worldWidth - glyph.width) / 2f, pauseContinueRect.y + pauseContinueRect.height + 40f * uiScale)
+
+        fun labelCentered(r: Rectangle, text: String) {
+            glyph.setText(font, text, Color.WHITE, r.width, Align.center, false)
+            val y = r.y + r.height / 2f + glyph.height / 2f
+            font.color = Color.WHITE
+            font.draw(batch, glyph, r.x, y)
+        }
+        labelCentered(pauseContinueRect, "Начать ещё раз")
+        labelCentered(pauseMenuRect, "В главное меню")
+
+        font.data.setScale(baseX, baseY)
+    }
+
+    private fun recalcUiScale() {
+        // ScreenViewport работает в пикселях: чем выше разрешение, тем “мельче” выглядит UI.
+        // Приводим UI к референсному размеру относительно игровой вьюхи (viewW/viewH).
+        val sx = Gdx.graphics.width / viewW
+        val sy = Gdx.graphics.height / viewH
+        val s = min(sx, sy)
+        uiScale = (baseUiScale * s).coerceIn(0.9f, 3.5f)
+    }
+
+    private fun loadSelectionsFromPrefs() {
+        val rawD = prefs.getString(prefKeyDifficulty, "")
+        val rawC = prefs.getString(prefKeyCharacter, "")
+
+        DifficultyKind.entries.firstOrNull { it.name == rawD }?.let { selectedDifficulty = it }
+        CharacterKind.entries.firstOrNull { it.name == rawC }?.let { selectedCharacter = it }
+
+        // Чтобы в меню (до resetRun) уже рисовался правильный спрайт персонажа
+        progression.setCharacter(selectedCharacter)
+    }
+
+    private fun saveSelectionsToPrefs() {
+        prefs.putString(prefKeyDifficulty, selectedDifficulty.name)
+        prefs.putString(prefKeyCharacter, selectedCharacter.name)
+        prefs.flush()
+    }
+
+    private fun DifficultyKind.uiCardDesc(): String {
+        fun f(x: Float) = String.format(Locale.US, "%.2f", x)
+        val reward = if (this == DifficultyKind.EASY) "Бонус: x2 опыт и золото.\n" else ""
+        val biome = "Биом: $biomeName.\n"
+        val stats = "Враги: HP x${f(enemyHpMul)}, урон x${f(enemyDamageMul)}. Спавн x${f(spawnIntervalMul)}."
+        return reward + biome + description + "\n" + stats
     }
 
     override fun resize(width: Int, height: Int) {
         viewport.update(width, height, true)
         uiViewport.update(width, height, true)
+        recalcUiScale()
         rebuildFont()
         val count = when (runState) {
             RunState.DIFFICULTY_SELECT -> difficultyChoices.size
@@ -255,14 +519,10 @@ class GameScreen : ScreenAdapter() {
             RunState.LEVEL_UP -> handleLevelUpInput()
             RunState.SHRINE_OPEN -> handleShrineInput()
             RunState.VICTORY -> {
-                if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.R) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE)) {
-                    enterDifficultySelect()
-                }
+                handleEndRunInput()
             }
             RunState.GAME_OVER -> {
-                if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.R) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE)) {
-                    enterDifficultySelect()
-                }
+                handleEndRunInput()
             }
         }
 
@@ -272,22 +532,64 @@ class GameScreen : ScreenAdapter() {
         viewport.apply()
         shapes.projectionMatrix = camera.combined
 
-        // Мир
+        // Фон мира (по сложности). Если текстуры нет — будет плейсхолдер.
+        batch.projectionMatrix = camera.combined
+        batch.begin()
+        val worldBg = Sprites.get(selectedDifficulty.worldTextureKey) {
+            when (selectedDifficulty) {
+                DifficultyKind.EASY -> Sprites.solidTexture(32, Color(0.18f, 0.32f, 0.18f, 1f))   // зелёный
+                DifficultyKind.MEDIUM -> Sprites.solidTexture(32, Color(0.55f, 0.45f, 0.22f, 1f)) // песок
+                DifficultyKind.HARD -> Sprites.solidTexture(32, Color(0.72f, 0.80f, 0.86f, 1f))   // снег/лёд
+            }
+        }
+        // Приглушаем фон, чтобы он не "спорил" с врагами/игроком (меньше контраста/насыщенности).
+        // Важно: обязательно восстанавливаем batch.color, иначе повлияет на весь остальной рендер.
+        val c = batch.color
+        val pr = c.r
+        val pg = c.g
+        val pb = c.b
+        val pa = c.a
+        val tint = when (selectedDifficulty) {
+            DifficultyKind.EASY -> Color(0.62f, 0.66f, 0.62f, 1f)
+            DifficultyKind.MEDIUM -> Color(0.68f, 0.66f, 0.60f, 1f)
+            DifficultyKind.HARD -> Color(0.78f, 0.80f, 0.86f, 1f)
+        }
+        batch.setColor(tint.r, tint.g, tint.b, pa)
+        batch.draw(worldBg, -arenaHalfW, -arenaHalfH, arenaHalfW * 2f, arenaHalfH * 2f)
+        // Лёгкая "дымка" поверх фона для дополнительного снижения визуального шума.
+        val fog = Sprites.get("bg_fog") { Sprites.solidTexture(2, Color.WHITE) }
+        batch.setColor(0f, 0f, 0f, 0.14f)
+        batch.draw(fog, -arenaHalfW, -arenaHalfH, arenaHalfW * 2f, arenaHalfH * 2f)
+        batch.setColor(pr, pg, pb, pa)
+        batch.end()
+
+        // Контур арены поверх фона
         shapes.begin(ShapeRenderer.ShapeType.Line)
         shapes.color = Color.DARK_GRAY
         shapes.rect(-arenaHalfW, -arenaHalfH, arenaHalfW * 2f, arenaHalfH * 2f)
         shapes.end()
 
         // --- Спрайты мира ---
-        batch.projectionMatrix = camera.combined
         batch.begin()
+
+        // Визуальный масштаб мировых спрайтов (не влияет на хитбоксы/баланс).
+        // Просили сделать персонажа/врагов/сундуки/шрайны крупнее относительно окна.
+        val worldSpriteScale = 2.0f
 
         val texPlayer = Sprites.get(progression.character.playerSpriteKey) {
             Sprites.get("player") { Sprites.circleTexture(64, Color.WHITE) }
         }
         val invulnT = (playerDamage.invuln / 0.6f).coerceIn(0f, 1f)
         val alpha = if (playerDamage.invuln > 0f) 0.35f + 0.65f * (1f - Interpolation.fade.apply(invulnT)) else 1f
-        Sprites.drawCentered(batch, texPlayer, playerPos.x, playerPos.y, playerRadius * 2f, playerRadius * 2f, alpha = alpha)
+        Sprites.drawCentered(
+            batch,
+            texPlayer,
+            playerPos.x,
+            playerPos.y,
+            playerRadius * 2f * worldSpriteScale,
+            playerRadius * 2f * worldSpriteScale,
+            alpha = alpha,
+        )
 
         val texEnemyNormal = Sprites.get("enemy_normal") { Sprites.circleTexture(64, Color(0.95f, 0.25f, 0.25f, 1f)) }
         val texEnemyFast = Sprites.get("enemy_fast") { Sprites.circleTexture(64, Color(1f, 0.45f, 0.35f, 1f)) }
@@ -307,7 +609,69 @@ class GameScreen : ScreenAdapter() {
                     EnemyKind.RANGED -> texEnemyRanged
                 }
             }
-            Sprites.drawCentered(batch, t, e.pos.x, e.pos.y, e.radius * 2f, e.radius * 2f)
+            Sprites.drawCentered(
+                batch,
+                t,
+                e.pos.x,
+                e.pos.y,
+                e.radius * 2f * worldSpriteScale,
+                e.radius * 2f * worldSpriteScale,
+            )
+        }
+
+        // FX ближней атаки (рисуем поверх врагов для читаемости)
+        if (meleeFx.isNotEmpty()) {
+            val texSlash = Sprites.get("fx_slash") { Sprites.solidTexture(2, Color.WHITE) }
+            val tw = texSlash.width
+            val th = texSlash.height
+            val c2 = batch.color
+            val pr2 = c2.r
+            val pg2 = c2.g
+            val pb2 = c2.b
+            val pa2 = c2.a
+            for (fx in meleeFx) {
+                val t = (fx.timeLeft / fx.duration).coerceIn(0f, 1f)
+                val a = (0.10f + 0.90f * t) * 0.85f
+                batch.setColor(fx.r, fx.g, fx.b, a)
+                val wFx = fx.length * worldSpriteScale
+                val hFx = fx.width * worldSpriteScale
+                batch.draw(
+                    texSlash,
+                    fx.x - wFx / 2f,
+                    fx.y - hFx / 2f,
+                    wFx / 2f,
+                    hFx / 2f,
+                    wFx,
+                    hFx,
+                    1f,
+                    1f,
+                    fx.rotDeg,
+                    0,
+                    0,
+                    tw,
+                    th,
+                    false,
+                    false,
+                )
+            }
+            batch.setColor(pr2, pg2, pb2, pa2)
+        }
+
+        // Цифры урона (поверх мира)
+        if (damageNumbers.isNotEmpty()) {
+            val baseX = font.data.scaleX
+            val baseY = font.data.scaleY
+            font.data.setScale(baseX * 0.55f, baseY * 0.55f)
+            for (fx in damageNumbers) {
+                val t = (fx.timeLeft / fx.duration).coerceIn(0f, 1f)
+                val a = (t * t).coerceIn(0f, 1f)
+                font.setColor(fx.r, fx.g, fx.b, a)
+                val text = fx.value.toString()
+                glyph.setText(font, text)
+                font.draw(batch, glyph, fx.x - glyph.width * 0.5f, fx.y)
+            }
+            font.data.setScale(baseX, baseY)
+            font.color = Color.WHITE
         }
 
         val texXp = Sprites.get("orb_xp") { Sprites.circleTexture(32, Color(0.35f, 0.95f, 0.95f, 1f)) }
@@ -319,29 +683,73 @@ class GameScreen : ScreenAdapter() {
         val texChest = Sprites.get("chest") { Sprites.circleTexture(48, Color(0.25f, 0.75f, 1f, 1f)) }
         val texChestElite = Sprites.get("chest_elite") { Sprites.circleTexture(48, Color(1f, 0.85f, 0.25f, 1f)) }
         for (c in loot.chests) {
-            Sprites.drawCentered(batch, if (c.isElite) texChestElite else texChest, c.pos.x, c.pos.y, c.radius * 2f, c.radius * 2f)
+            Sprites.drawCentered(
+                batch,
+                if (c.isElite) texChestElite else texChest,
+                c.pos.x,
+                c.pos.y,
+                c.radius * 2f * worldSpriteScale,
+                c.radius * 2f * worldSpriteScale,
+            )
         }
 
         val texShrine = Sprites.get("shrine") { Sprites.circleTexture(64, Color(0.25f, 0.95f, 0.45f, 0.75f)) }
         for (s in shrineSystem.shrines) {
             // Иконка + лёгкая "пульсация" прогресса
             val p = (s.progressSec / s.requiredSec).coerceIn(0f, 1f)
-            Sprites.drawCentered(batch, texShrine, s.pos.x, s.pos.y, 26f, 26f, alpha = 0.55f)
-            Sprites.drawCentered(batch, texShrine, s.pos.x, s.pos.y, 10f + 14f * p, 10f + 14f * p, alpha = 0.75f)
+            Sprites.drawCentered(batch, texShrine, s.pos.x, s.pos.y, 26f * worldSpriteScale, 26f * worldSpriteScale, alpha = 0.55f)
+            Sprites.drawCentered(
+                batch,
+                texShrine,
+                s.pos.x,
+                s.pos.y,
+                (10f + 14f * p) * worldSpriteScale,
+                (10f + 14f * p) * worldSpriteScale,
+                alpha = 0.75f,
+            )
         }
 
-        val texCloud = Sprites.get("cloud_toxic") { Sprites.circleTexture(128, Color(0.3f, 1f, 0.3f, 0.25f)) }
+        val texCloud = Sprites.get("cloud_toxic") {
+            Sprites.softCloudTexture(
+                size = 192,
+                base = Color(0.25f, 1.00f, 0.35f, 0.85f),
+                spotCount = 11,
+                seed = 20260206L,
+            )
+        }
+
+        // Оружие "Облако яда": визуальная аура вокруг игрока (раньше её не рисовали, из-за этого казалось, что текстуры нет).
+        progression.weapons.firstOrNull { it.kind == WeaponKind.POISON_AURA }?.let { wAura ->
+            val b = Balance.cfg.weapons.poisonAura
+            val range = b.swingRangeBase + wAura.rangeLevel * b.swingRangePerLevel
+            // лёгкая пульсация, чтобы эффект читался
+            val pulse = 1f + 0.05f * sin(runTime * 2.6f)
+            val alphaAura = 0.34f
+            Sprites.drawCentered(
+                batch,
+                texCloud,
+                playerPos.x,
+                playerPos.y,
+                range * 2f * pulse * worldSpriteScale,
+                range * 2f * pulse * worldSpriteScale,
+                alpha = alphaAura,
+            )
+        }
+
         if (itemSystem.toxicActive()) {
             val r = itemSystem.toxicRadius()
-            Sprites.drawCentered(batch, texCloud, playerPos.x, playerPos.y, r * 2f, r * 2f, alpha = 0.25f)
+            // Визуальный масштаб эффектов (просили "ещё ловушка/облако").
+            Sprites.drawCentered(batch, texCloud, playerPos.x, playerPos.y, r * 2f * worldSpriteScale, r * 2f * worldSpriteScale, alpha = 0.25f)
         }
         // Ловушки (иконка) / облако от ловушки
         val texTrap = Sprites.get("trap") { Sprites.circleTexture(64, Color(0.35f, 0.95f, 0.45f, 1f)) }
         for (t in poisonTraps) {
             if (t.armTimer > 0f) {
-                Sprites.drawCentered(batch, texTrap, t.pos.x, t.pos.y, 18f, 18f, alpha = 0.85f)
+                Sprites.drawCentered(batch, texTrap, t.pos.x, t.pos.y, 18f * worldSpriteScale, 18f * worldSpriteScale, alpha = 0.90f)
             } else if (t.cloudTimer > 0f) {
-                Sprites.drawCentered(batch, texCloud, t.pos.x, t.pos.y, t.radius * 2f, t.radius * 2f, alpha = 0.22f)
+                Sprites.drawCentered(batch, texCloud, t.pos.x, t.pos.y, t.radius * 2f * worldSpriteScale, t.radius * 2f * worldSpriteScale, alpha = 0.22f)
+                // Иконку ловушки оставляем поверх облака для читаемости.
+                Sprites.drawCentered(batch, texTrap, t.pos.x, t.pos.y, 14f * worldSpriteScale, 14f * worldSpriteScale, alpha = 0.70f)
             }
         }
 
@@ -397,6 +805,26 @@ class GameScreen : ScreenAdapter() {
         runTime += delta
         itemSystem.update(delta)
         playerDamage.update(delta)
+        // FX ближней атаки
+        if (meleeFx.isNotEmpty()) {
+            val it = meleeFx.iterator()
+            while (it.hasNext()) {
+                val fx = it.next()
+                fx.timeLeft -= delta
+                if (fx.timeLeft <= 0f) it.remove()
+            }
+        }
+        // FX цифр урона
+        if (damageNumbers.isNotEmpty()) {
+            val it = damageNumbers.iterator()
+            while (it.hasNext()) {
+                val fx = it.next()
+                fx.timeLeft -= delta
+                // лёгкий "взлёт"
+                fx.y += 42f * delta
+                if (fx.timeLeft <= 0f) it.remove()
+            }
+        }
         // Кольцо жизненной силы: динамический max HP (обновляем каждый тик, чтобы работало сразу после выбора).
         playerDamage.setMaxHp(baseMaxHp * progression.getMaxHpMultiplier())
 
@@ -632,6 +1060,7 @@ class GameScreen : ScreenAdapter() {
     private fun applyDifficultyPick(idx: Int) {
         if (idx < 0 || idx >= difficultyChoices.size) return
         selectedDifficulty = difficultyChoices[idx]
+        saveSelectionsToPrefs()
         enterCharacterSelect()
     }
 
@@ -643,6 +1072,7 @@ class GameScreen : ScreenAdapter() {
     private fun applyCharacterPick(idx: Int) {
         if (idx < 0 || idx >= characterChoices.size) return
         selectedCharacter = characterChoices[idx]
+        saveSelectionsToPrefs()
         resetRun()
     }
 
@@ -655,6 +1085,19 @@ class GameScreen : ScreenAdapter() {
         // Space/Esc = продолжить (кнопка в HUD тоже работает)
         if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.ESCAPE)) {
             runState = RunState.RUNNING
+        }
+    }
+
+    private fun handleEndRunInput() {
+        // Рестарт (за того же персонажа и на той же сложности, без возврата в выбор)
+        if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.R) || Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.SPACE)) {
+            resetRun()
+        }
+        // Esc -> главное меню
+        if (Gdx.input.isKeyJustPressed(com.badlogic.gdx.Input.Keys.ESCAPE)) {
+            Gdx.app.postRunnable {
+                game.setScreen(MainMenuScreen(game))
+            }
         }
     }
 
@@ -945,7 +1388,7 @@ class GameScreen : ScreenAdapter() {
         poisonTraps.add(
             PoisonTrapCloud(
                 pos = Vector2(t.pos.x, t.pos.y),
-                armTimer = 0.20f,
+                armTimer = 0.55f,
                 cloudTimer = 0f,
                 radius = radius,
                 dps = baseDps,
@@ -1065,11 +1508,42 @@ class GameScreen : ScreenAdapter() {
         val candidates = pickNearestEnemies(hits, range = range)
         if (candidates.isEmpty()) return
 
+        // Визуал удара: простой "слэш" в направлении первой цели.
+        run {
+            val t = candidates.first()
+            val dx = t.pos.x - playerPos.x
+            val dy = t.pos.y - playerPos.y
+            val len = sqrt(dx * dx + dy * dy)
+            val nx = if (len > 0.001f) dx / len else 1f
+            val ny = if (len > 0.001f) dy / len else 0f
+            val angle = (atan2(ny, nx) * 57.29578f) // rad->deg
+            val off = 18f
+            val fxLen = (28f + range * 0.10f).coerceIn(34f, 62f)
+            val fxW = if (kind == WeaponKind.DAGGER) 7f else 9f
+            val col = if (kind == WeaponKind.DAGGER) floatArrayOf(1.0f, 0.35f, 0.35f) else floatArrayOf(0.85f, 0.92f, 1.0f)
+            meleeFx.add(
+                MeleeSlashFx(
+                    x = playerPos.x + nx * off,
+                    y = playerPos.y + ny * off,
+                    rotDeg = angle,
+                    timeLeft = 0.12f,
+                    duration = 0.12f,
+                    length = fxLen,
+                    width = fxW,
+                    r = col[0],
+                    g = col[1],
+                    b = col[2],
+                ),
+            )
+        }
+
         val baseDamage = b.baseDamage + w.damageLevel * b.damagePerLevel
         for (e in candidates) {
             var dmg = baseDamage * dmgMul
-            if (MathUtils.random() < critChance) dmg *= critMul
+            val crit = MathUtils.random() < critChance
+            if (crit) dmg *= critMul
             e.hp -= dmg
+            spawnDamageNumber(e.pos.x, e.pos.y + e.radius + 10f, dmg, crit = crit)
             val lifesteal = progression.getLifeStealPct()
             if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
 
@@ -1150,6 +1624,7 @@ class GameScreen : ScreenAdapter() {
             getRadius = { it.radius },
             damageEnemy = { e, dmg ->
                 e.hp -= dmg
+                spawnDamageNumber(e.pos.x, e.pos.y + e.radius + 8f, dmg, crit = false)
                 if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
             },
             onEnemyHit = { e, source, dmg ->
@@ -1161,6 +1636,7 @@ class GameScreen : ScreenAdapter() {
                     getPos = { it.pos },
                     damageEnemy = { en, d ->
                         en.hp -= d
+                        spawnDamageNumber(en.pos.x, en.pos.y + en.radius + 8f, d, crit = false)
                         if (lifesteal > 0f) playerDamage.heal(d * lifesteal)
                     },
                     findNearest = ::findNearestEnemyFromPointExcludingVisited,
@@ -1288,25 +1764,33 @@ class GameScreen : ScreenAdapter() {
 
         batch.begin()
         font.color = Color.WHITE
-        val s = uiScale.coerceIn(1.0f, 2.0f)
+        val s = uiScale.coerceIn(0.9f, 3.5f)
         val padX = 16f * s
         val top = uiViewport.worldHeight - 16f * s
-        val maxW = (uiViewport.worldWidth - padX * 2f).coerceAtLeast(100f)
-        val gap = 8f * s
+        val w = uiViewport.worldWidth
+        val h = uiViewport.worldHeight
+        val gap = 6f * s
+        val colW = (w - padX * 2f).coerceAtLeast(120f * s)
 
-        fun drawWrapped(text: String, x: Float, yTop: Float): Float {
+        // HUD просили "в 2 раза меньше" — уменьшаем масштаб только внутри HUD-блока.
+        val baseScaleX = font.data.scaleX
+        val baseScaleY = font.data.scaleY
+        val hudFontScale = 0.5f
+        font.data.setScale(baseScaleX * hudFontScale, baseScaleY * hudFontScale)
+
+        fun drawWrapped(text: String, x: Float, yTop: Float, wrapW: Float): Float {
             // Возвращает новую Y-координату (верх следующего блока), уже со смещением вниз.
-            glyph.setText(font, text, Color.WHITE, maxW, Align.left, true)
+            glyph.setText(font, text, Color.WHITE, wrapW, Align.left, true)
             font.draw(batch, glyph, x, yTop)
             return yTop - glyph.height - gap
         }
 
+        // --- Левый верх: HP / LVL / XP ---
         var y = top
-        y = drawWrapped(
-            "HP: ${playerDamage.hp.toInt()}   LVL: ${progression.level}   GOLD: ${loot.gold}   Time: ${runTime.toInt()}s   Kills: $killedEnemies",
-            padX,
-            y,
-        )
+        y = drawWrapped("HP: ${playerDamage.hp.toInt()}", padX, y, colW)
+        y = drawWrapped("LVL: ${progression.level}", padX, y, colW)
+        y = drawWrapped("XP: ${progression.xp}/${progression.xpToNext}", padX, y, colW)
+        y = drawWrapped("GOLD: ${loot.gold}", padX, y, colW)
 
         val lineWeapon = buildString {
             append("Оружие: ")
@@ -1317,7 +1801,8 @@ class GameScreen : ScreenAdapter() {
                 append("${w.kind.uiName} Lv$up")
             }
         }
-        y = drawWrapped(lineWeapon, padX, y)
+        // --- Оружие / кольца / предметы (вернули обратно в левую колонку) ---
+        y = drawWrapped(lineWeapon, padX, y, colW)
 
         val lineRings = buildString {
             append("Кольца: ")
@@ -1328,7 +1813,7 @@ class GameScreen : ScreenAdapter() {
                 append("${p.kind.uiName} Lv$up")
             }
         }
-        y = drawWrapped(lineRings, padX, y)
+        y = drawWrapped(lineRings, padX, y, colW)
 
         val lineItems = buildString {
             append("Предметы: ")
@@ -1346,30 +1831,41 @@ class GameScreen : ScreenAdapter() {
                 }
             }
         }
-        y = drawWrapped(lineItems, padX, y)
+        y = drawWrapped(lineItems, padX, y, colW)
 
-        // Кнопка паузы (справа сверху, но под HUD-текстом)
-        val hudUsed = (top - y).coerceAtLeast(0f)
+        // --- Нижний правый угол: Time + Kills в одной строке через пробел ---
+        val timeKills = "Time: ${runTime.toInt()}s  Kills: $killedEnemies"
+        glyph.setText(font, timeKills, Color.WHITE, w, Align.left, false)
+        font.draw(batch, glyph, w - padX - glyph.width, padX + glyph.height)
+
+        // Кнопка паузы (строго справа сверху)
+        val hudUsed = (top - y).coerceAtLeast(0f) // оставляем для boss-bar
         val pauseSize = 44f * s
         pauseRect.set(
             uiViewport.worldWidth - 16f * s - pauseSize,
-            (uiViewport.worldHeight - 16f * s - pauseSize - hudUsed).coerceAtLeast(16f * s),
+            uiViewport.worldHeight - 16f * s - pauseSize,
             pauseSize,
             pauseSize,
         )
         batch.end()
         shapes.projectionMatrix = uiCamera.combined
         shapes.begin(ShapeRenderer.ShapeType.Filled)
-        shapes.color = Color(0f, 0f, 0f, 0.45f)
-        shapes.rect(pauseRect.x, pauseRect.y, pauseRect.width, pauseRect.height)
+        // Без чёрного фона: только две вертикальные палочки.
+        val barW = (pauseRect.width * 0.12f).coerceAtLeast(2f * s)
+        val barH = pauseRect.height * 0.58f
+        val barY = pauseRect.y + (pauseRect.height - barH) * 0.5f
+        val leftX = pauseRect.x + pauseRect.width * 0.36f - barW * 0.5f
+        val rightX = pauseRect.x + pauseRect.width * 0.64f - barW * 0.5f
+        shapes.color = Color(1f, 1f, 1f, 0.92f)
+        shapes.rect(leftX, barY, barW, barH)
+        shapes.rect(rightX, barY, barW, barH)
         shapes.end()
         batch.begin()
         font.color = Color.WHITE
-        val pauseLabel = if (runState == RunState.PAUSED) ">" else "||"
-        font.draw(batch, pauseLabel, pauseRect.x + 14f * s, pauseRect.y + 30f * s)
+        // Текст на кнопке больше не рисуем.
 
-        // Миникарта (справа сверху)
-        drawMiniMap(topOffset = hudUsed + 8f)
+        // Миникарта (снизу слева, уменьшили — без x2)
+        drawMiniMap(uiScale = s, bottomLeft = true, scaleMul = 1.0f)
 
         // Босс-бар (если жив)
         enemies.firstOrNull { it.isBoss }?.let { boss ->
@@ -1378,16 +1874,10 @@ class GameScreen : ScreenAdapter() {
 
         when (runState) {
             RunState.GAME_OVER -> {
-            font.color = Color(1f, 0.4f, 0.4f, 1f)
-            font.draw(batch, "GAME OVER", uiViewport.worldWidth / 2f - 60f, uiViewport.worldHeight / 2f + 10f)
-            font.color = Color.WHITE
-            font.draw(batch, "Press R / Space to restart", uiViewport.worldWidth / 2f - 110f, uiViewport.worldHeight / 2f - 16f)
+                drawEndRunMenuOverlay(title = "КОНЕЦ ЗАБЕГА", titleColor = Color(1f, 0.4f, 0.4f, 1f))
             }
             RunState.VICTORY -> {
-                font.color = Color(0.4f, 1f, 0.4f, 1f)
-                font.draw(batch, "VICTORY!", uiViewport.worldWidth / 2f - 60f, uiViewport.worldHeight / 2f + 10f)
-                font.color = Color.WHITE
-                font.draw(batch, "Press R / Space to restart", uiViewport.worldWidth / 2f - 110f, uiViewport.worldHeight / 2f - 16f)
+                drawEndRunMenuOverlay(title = "ПОБЕДА!", titleColor = Color(0.4f, 1f, 0.4f, 1f))
             }
             RunState.LEVEL_UP -> uiSystem.drawLevelUpOverlay(batch, shapes, font, uiViewport, uiCamera, pendingChoices, uiScale = uiScale)
             RunState.SHRINE_OPEN -> uiSystem.drawShrineOverlay(batch, shapes, font, uiViewport, uiCamera, pendingShrineChoices, uiScale = uiScale)
@@ -1398,21 +1888,21 @@ class GameScreen : ScreenAdapter() {
                 font,
                 uiViewport,
                 uiCamera,
-                difficultyChoices.map { it.uiName to it.description },
+                difficultyChoices.map { it.uiName to it.uiCardDesc() },
                 uiScale = uiScale,
             )
             RunState.PAUSED -> {
-                font.color = Color.WHITE
-                font.draw(batch, "PAUSE", uiViewport.worldWidth / 2f - 40f, uiViewport.worldHeight / 2f + 10f)
-                font.color = Color.LIGHT_GRAY
-                font.draw(batch, "Tap > / Space / Esc", uiViewport.worldWidth / 2f - 90f, uiViewport.worldHeight / 2f - 16f)
+                drawPauseMenuOverlay()
             }
             else -> Unit
         }
+
+        // Восстанавливаем масштаб шрифта после HUD-рендера (оверлеи/меню используют другой масштаб).
+        font.data.setScale(baseScaleX, baseScaleY)
         batch.end()
     }
 
-    private fun drawMiniMap(topOffset: Float = 0f) {
+    private fun drawMiniMap(uiScale: Float = 1f, bottomLeft: Boolean = false, scaleMul: Float = 1f, topOffset: Float = 0f) {
         // batch уже в begin()
         batch.end()
         shapes.projectionMatrix = uiCamera.combined
@@ -1420,10 +1910,12 @@ class GameScreen : ScreenAdapter() {
 
         val uiW = uiViewport.worldWidth
         val uiH = uiViewport.worldHeight
-        // Если HUD занял много места, уменьшаем миникарту и сдвигаем ниже.
-        val radius = (68f - topOffset * 0.25f).coerceIn(42f, 68f)
-        val cx = uiW - radius - 16f
-        val cy = uiH - radius - 16f - topOffset
+        val s = uiScale.coerceIn(0.9f, 3.5f)
+        // Просили: увеличить миникарту в 2 раза и поставить в угол снизу слева.
+        val baseRadius = 68f * s * scaleMul
+        val radius = baseRadius.coerceIn(56f * s, 140f * s)
+        val cx = if (bottomLeft) radius + 16f * s else uiW - radius - 16f * s
+        val cy = if (bottomLeft) radius + 16f * s else uiH - radius - 16f * s - topOffset
 
         // фон
         shapes.color = Color(0f, 0f, 0f, 0.45f)
@@ -1602,7 +2094,12 @@ class GameScreen : ScreenAdapter() {
 
         val gen = FreeTypeFontGenerator(ttf)
         try {
-            val size = (uiViewport.screenHeight * 0.028f * uiScale).toInt().coerceIn(16, 42)
+            // Важно:
+            // - `ScreenViewport` уже в пикселях, поэтому `screenHeight` сам растёт вместе с разрешением.
+            // - `uiScale` мы тоже пересчитываем от разрешения.
+            // Если умножать ещё и на `uiScale`, получится ДВОЙНОЕ масштабирование (и текст разъедется по UI).
+            // Чуть меньше базовый размер: иначе на Desktop-окнах под Android (1080x1920) HUD/карточки становятся гигантскими.
+            val size = (uiViewport.screenHeight * 0.022f * baseUiScale).toInt().coerceIn(14, 90)
             val param = FreeTypeFontGenerator.FreeTypeFontParameter().apply {
                 this.size = size
                 color = Color.WHITE

@@ -20,6 +20,17 @@ enum class InnateKind {
     MAGIC_DAMAGE,      // + магический урон
 }
 
+val InnateKind.uiName: String
+    get() = when (this) {
+        InnateKind.SLOW_ENEMIES -> "Замедление врагов"
+        InnateKind.DOT_SPEED -> "Скорость ДОТ"
+        InnateKind.MOVE_SPEED -> "Скорость передвижения"
+        InnateKind.AREA_SIZE -> "Размер области"
+        InnateKind.DODGE_CHANCE -> "Шанс уклонения"
+        InnateKind.PHYSICAL_DAMAGE -> "Физический урон"
+        InnateKind.MAGIC_DAMAGE -> "Магический урон"
+    }
+
 enum class CharacterKind(
     val uiName: String,
     val gender: Gender,

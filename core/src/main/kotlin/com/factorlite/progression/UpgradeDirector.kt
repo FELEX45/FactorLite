@@ -20,6 +20,45 @@ object UpgradeDirector {
         val isRelevant: Boolean,
     )
 
+    private fun supportsWeaponUpgrade(kind: WeaponKind, up: UpgradeOption.WeaponUpgradeKind): Boolean {
+        return when (kind) {
+            // Снарядные посохи: поддерживают весь "проектильный" паттерн
+            WeaponKind.FROSTSTAFF, WeaponKind.FIRESTAFF -> true
+
+            // Револьвер: нет разброса/точности и не использует targeting-range,
+            // поэтому ACCURACY/RANGE будут "пустыми" апгрейдами.
+            WeaponKind.REVOLVER -> up in setOf(
+                UpgradeOption.WeaponUpgradeKind.DAMAGE,
+                UpgradeOption.WeaponUpgradeKind.FIRE_RATE,
+                UpgradeOption.WeaponUpgradeKind.PROJECTILE_SPEED,
+            )
+
+            // Ловушка/аура — всегда урон по области: скорость снаряда/точность не используются.
+            WeaponKind.POISON_TRAP, WeaponKind.POISON_AURA -> up in setOf(
+                UpgradeOption.WeaponUpgradeKind.DAMAGE,
+                UpgradeOption.WeaponUpgradeKind.FIRE_RATE,
+                UpgradeOption.WeaponUpgradeKind.RANGE,
+            )
+
+            // Мили: нет снарядов -> ACCURACY/PROJECTILE_SPEED бессмысленны.
+            WeaponKind.KATANA, WeaponKind.DAGGER -> up in setOf(
+                UpgradeOption.WeaponUpgradeKind.DAMAGE,
+                UpgradeOption.WeaponUpgradeKind.FIRE_RATE,
+                UpgradeOption.WeaponUpgradeKind.RANGE,
+            )
+        }
+    }
+
+    private fun supportsWeaponMod(kind: WeaponKind, mod: WeaponModKind): Boolean {
+        return when (kind) {
+            // Аура и ловушка — всегда по области, "кол-во целей/снарядов" и прочие моды не применяются.
+            WeaponKind.POISON_AURA, WeaponKind.POISON_TRAP -> false
+
+            // Остальным оставляем текущие моды (EXTRA/RICOCHET/PIERCE применяются в боёвке).
+            else -> mod in setOf(WeaponModKind.EXTRA, WeaponModKind.RICOCHET, WeaponModKind.PIERCE)
+        }
+    }
+
     fun makeChoices(p: RunProgression): List<UpgradeOption> {
         val cands = buildCandidates(p)
         if (cands.isEmpty()) {
@@ -68,6 +107,7 @@ object UpgradeDirector {
             val wc = cb.weapon
             // Вместо "Улучшить оружие" выдаём конкретные апгрейды паттерна.
             fun addUp(up: UpgradeOption.WeaponUpgradeKind, weight: Float, cap: Int) {
+                if (!supportsWeaponUpgrade(w.kind, up)) return
                 val current = when (up) {
                     UpgradeOption.WeaponUpgradeKind.DAMAGE -> w.damageLevel
                     UpgradeOption.WeaponUpgradeKind.FIRE_RATE -> w.cooldownLevel
@@ -96,7 +136,7 @@ object UpgradeDirector {
             addUp(UpgradeOption.WeaponUpgradeKind.RANGE, wc.rangeWeight, cap = wc.rangeCap)
 
             // Моды оружия (вес поменьше, чем общий уровень)
-            if (w.extraLevel < cb.modExtraCap) {
+            if (supportsWeaponMod(w.kind, WeaponModKind.EXTRA) && w.extraLevel < cb.modExtraCap) {
                 val rarity = rollRarity()
                 out += Weighted(
                     UpgradeOption.WeaponMod(
@@ -114,7 +154,7 @@ object UpgradeDirector {
                     true,
                 )
             }
-            if (w.ricochetLevel < cb.modRicochetCap) {
+            if (supportsWeaponMod(w.kind, WeaponModKind.RICOCHET) && w.ricochetLevel < cb.modRicochetCap) {
                 val rarity = rollRarity()
                 out += Weighted(
                     UpgradeOption.WeaponMod(
@@ -133,7 +173,7 @@ object UpgradeDirector {
                     true,
                 )
             }
-            if (w.pierceLevel < cb.modPierceCap) {
+            if (supportsWeaponMod(w.kind, WeaponModKind.PIERCE) && w.pierceLevel < cb.modPierceCap) {
                 val rarity = rollRarity()
                 out += Weighted(
                     UpgradeOption.WeaponMod(
