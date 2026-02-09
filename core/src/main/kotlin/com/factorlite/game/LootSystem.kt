@@ -3,8 +3,10 @@ package com.factorlite.game
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Vector2
 import com.factorlite.loot.ItemInstance
-import com.factorlite.loot.rollItemKind
+import com.factorlite.loot.ItemKind
+import com.factorlite.loot.fixedRarity
 import com.factorlite.loot.rollRarityByChestCost
+import com.factorlite.loot.toFixedInstance
 import com.factorlite.progression.RunProgression
 import kotlin.math.sqrt
 
@@ -134,7 +136,7 @@ class LootSystem {
         }
     }
 
-    fun tryOpenChestByProximity(playerPos: Vector2): OpenChestResult? {
+    fun tryOpenChestByProximity(playerPos: Vector2, luckBonus: Float = 0f): OpenChestResult? {
         // Если игрок рядом с сундуком и хватает золота — открываем автоматически
         val openRadius = 56f
         val openR2 = openRadius * openRadius
@@ -151,7 +153,7 @@ class LootSystem {
             it.remove()
 
             // Теперь сундук сразу выдаёт 1 рандомный предмет (без выбора).
-            val item = rollChestItem(c.rarityCost)
+            val item = rollChestItem(c.rarityCost, luckBonus)
 
             // Следующая стоимость (только для “обычных” сундуков)
             if (!c.isElite) nextChestCost = (nextChestCost * 2).coerceAtMost(99999)
@@ -250,8 +252,22 @@ class LootSystem {
         }
     }
 
-    private fun rollChestItem(rarityCost: Int): ItemInstance {
-        return ItemInstance(rollItemKind(), rollRarityByChestCost(rarityCost))
+    private fun rollChestItem(rarityCost: Int, luckBonus: Float): ItemInstance {
+        val target = rollRarityByChestCost(rarityCost, luckBonus = luckBonus)
+
+        // У предметов нет "вариантов редкости": каждый ItemKind имеет фиксированную редкость.
+        // Поэтому выбираем предмет из тира target; если в тире пусто — спускаемся вниз.
+        val all = ItemKind.entries
+        for (step in 0..target.ordinal) {
+            val r = com.factorlite.loot.Rarity.entries[(target.ordinal - step).coerceIn(0, com.factorlite.loot.Rarity.entries.size - 1)]
+            val pool = all.filter { it.fixedRarity == r }
+            if (pool.isNotEmpty()) {
+                return pool[MathUtils.random(pool.size - 1)].toFixedInstance()
+            }
+        }
+
+        // fallback (на всякий)
+        return all[MathUtils.random(all.size - 1)].toFixedInstance()
     }
 }
 

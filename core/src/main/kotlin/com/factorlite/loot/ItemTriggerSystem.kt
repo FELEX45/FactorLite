@@ -23,6 +23,7 @@ class ItemTriggerSystem {
     private var shieldCooldown = 0f
     private var shieldReady = false
     private var toxicTimer = 0f
+    private var bookTimer = 0f
 
     fun reset() {
         items.clear()
@@ -30,6 +31,7 @@ class ItemTriggerSystem {
         shieldCooldown = 0f
         shieldReady = false
         toxicTimer = 0f
+        bookTimer = 0f
     }
 
     fun addItem(item: ItemInstance) {
@@ -45,11 +47,23 @@ class ItemTriggerSystem {
         return best
     }
 
-    fun update(delta: Float) {
+    fun update(delta: Float, onGainXp: (Int) -> Unit = {}) {
         toxicTimer = maxOf(0f, toxicTimer - delta)
 
         shieldCooldown = maxOf(0f, shieldCooldown - delta)
         if (shieldCooldown <= 0f) shieldReady = true
+
+        // Книга: пассивный прирост XP
+        if (bestRarity(ItemKind.BOOK) != null) {
+            bookTimer -= delta
+            if (bookTimer <= 0f) {
+                bookTimer = 2.0f
+                onGainXp(5)
+            }
+        } else {
+            // Если предмета нет — не копим таймер.
+            bookTimer = 0f
+        }
 
         if (lightningFx.isNotEmpty()) {
             val it = lightningFx.iterator()
@@ -77,7 +91,7 @@ class ItemTriggerSystem {
             return PlayerHitResult(blocked = true)
         }
 
-        val toxR = bestRarity(ItemKind.TOXIC_BARREL)
+        val toxR = bestRarity(ItemKind.POCKET_JIDZH)
         if (toxR != null) {
             toxicTimer = toxR.toxicDurationSec
         }
@@ -87,12 +101,12 @@ class ItemTriggerSystem {
     fun toxicActive(): Boolean = toxicTimer > 0f
 
     fun toxicRadius(): Float {
-        val r = bestRarity(ItemKind.TOXIC_BARREL) ?: Rarity.COMMON
+        val r = bestRarity(ItemKind.POCKET_JIDZH) ?: Rarity.COMMON
         return r.toxicRadius
     }
 
     fun toxicDps(): Float {
-        val r = bestRarity(ItemKind.TOXIC_BARREL) ?: Rarity.COMMON
+        val r = bestRarity(ItemKind.POCKET_JIDZH) ?: Rarity.COMMON
         return r.toxicDps
     }
 
@@ -127,7 +141,7 @@ class ItemTriggerSystem {
     }
 
     /**
-     * Прок молний по попаданию (LIGHTNING_ORB).
+     * Прок молний по попаданию (BALL_LIGHTNING).
      *
      * Внимание: для visited используется identityHashCode, чтобы не зависеть от equals/hashCode у сущностей.
      */
@@ -139,7 +153,7 @@ class ItemTriggerSystem {
         damageEnemy: (E, Float) -> Unit,
         findNearest: (x: Float, y: Float, visitedIds: Set<Int>, maxRange2: Float) -> E?,
     ) {
-        val r = bestRarity(ItemKind.LIGHTNING_ORB) ?: return
+        val r = bestRarity(ItemKind.BALL_LIGHTNING) ?: return
         if (MathUtils.random() >= r.lightningProcChance) return
 
         val maxJumps = r.lightningChains
@@ -176,13 +190,39 @@ class ItemTriggerSystem {
     }
 
     /**
-     * Хил по убийству (BURGER_DROP).
+     * Хил по убийству (PIZZA_DROP).
      * Возвращает, сколько HP добавить (0 если не сработало/нет предмета).
      */
     fun rollBurgerHeal(): Float {
-        val r = bestRarity(ItemKind.BURGER_DROP) ?: return 0f
+        val r = bestRarity(ItemKind.PIZZA_DROP) ?: return 0f
         if (MathUtils.random() >= r.burgerDropChance) return 0f
         return r.burgerHealAmount
+    }
+
+    fun rollWolfFangHeal(): Float {
+        if (bestRarity(ItemKind.WOLF_FANG) == null) return 0f
+        if (MathUtils.random() >= 0.05f) return 0f
+        return 10f
+    }
+
+    fun getGoldGainMultiplier(): Float {
+        val count = items.count { it.kind == ItemKind.MIDAS }
+        return 1f + 0.15f * count
+    }
+
+    fun getMoveSpeedMultiplier(): Float {
+        val count = items.count { it.kind == ItemKind.SANDALS }
+        return 1f + 0.03f * count
+    }
+
+    fun getLuckBonus(): Float {
+        val count = items.count { it.kind == ItemKind.ACE }
+        return (0.10f * count).coerceIn(0f, 0.65f)
+    }
+
+    fun getMaxHpFlatBonus(): Float {
+        val count = items.count { it.kind == ItemKind.HEART }
+        return 20f * count
     }
 }
 

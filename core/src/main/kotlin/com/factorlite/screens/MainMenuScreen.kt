@@ -14,6 +14,9 @@ import com.badlogic.gdx.math.Rectangle
 import com.badlogic.gdx.utils.Align
 import com.badlogic.gdx.utils.viewport.ScreenViewport
 import com.factorlite.FactorLiteGame
+import com.factorlite.audio.Audio
+import com.factorlite.audio.AudioSettings
+import com.factorlite.audio.Bgm
 import com.factorlite.gfx.Sprites
 import com.factorlite.util.CrashLog
 
@@ -31,6 +34,8 @@ class MainMenuScreen(private val game: FactorLiteGame) : ScreenAdapter() {
     private val btnPlay = Rectangle()
     private val btnInfo = Rectangle()
     private val btnExit = Rectangle()
+    private val toggleSfx = Rectangle()
+    private val toggleMusic = Rectangle()
 
     private var fatalErrorText: String? = null
 
@@ -41,15 +46,33 @@ class MainMenuScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 val ui = uiViewport.unproject(com.badlogic.gdx.math.Vector2(screenX.toFloat(), screenY.toFloat()))
 
                 when {
+                    toggleSfx.contains(ui) -> {
+                        val was = Audio.enabled
+                        Audio.enabled = !Audio.enabled
+                        AudioSettings.save()
+                        if (!was && Audio.enabled) Audio.uiClick()
+                        return true
+                    }
+                    toggleMusic.contains(ui) -> {
+                        val was = Bgm.enabled
+                        Bgm.enabled = !Bgm.enabled
+                        Bgm.applySettings()
+                        AudioSettings.save()
+                        if (!was && Bgm.enabled) Audio.uiClick()
+                        return true
+                    }
                     btnPlay.contains(ui) -> {
+                        Audio.uiClick()
                         game.setScreen(GameScreen(game))
                         return true
                     }
                     btnInfo.contains(ui) -> {
+                        Audio.uiClick()
                         game.setScreen(InfoScreen(game))
                         return true
                     }
                     btnExit.contains(ui) -> {
+                        Audio.uiClick()
                         Gdx.app.exit()
                         return true
                     }
@@ -108,7 +131,7 @@ class MainMenuScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 this.size = size
                 color = Color.WHITE
                 characters = FreeTypeFontGenerator.DEFAULT_CHARS +
-                    "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»"
+                    "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»→"
             }
             font = gen.generateFont(param)
         } finally {
@@ -130,6 +153,28 @@ class MainMenuScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         btnPlay.set(cx - btnW / 2f, firstY, btnW, btnH)
         btnInfo.set(cx - btnW / 2f, firstY - (btnH + gap), btnW, btnH)
         btnExit.set(cx - btnW / 2f, firstY - 2f * (btnH + gap), btnW, btnH)
+
+        // Тумблеры звука/музыки (под кнопками).
+        // На узких экранах подписи "Звук: ВКЛ" и "Музыка: ВКЛ" могут не влезать в половинки
+        // и визуально "наезжать" друг на друга, потому что текст рисуется без клиппинга.
+        // Поэтому делаем тумблеры в одну колонку на всю ширину кнопок.
+        val tw = btnW
+        val minH = 52f * s
+        val textH = font.lineHeight * 1.35f
+        val th = maxOf(minH, textH).coerceIn(44f * s, 92f * s)
+        val ty1 = btnExit.y - (th + 14f * s)
+        toggleSfx.set(cx - tw / 2f, ty1, tw, th)
+        val ty2 = ty1 - (th + 10f * s)
+        toggleMusic.set(cx - tw / 2f, ty2, tw, th)
+
+        // Страховка для низких экранов: не даём нижнему тумблеру залезать на подпись версии снизу.
+        // (внутри render() версия рисуется примерно от 12*s)
+        val minBottomY = 12f * s + th + 8f * s
+        if (toggleMusic.y < minBottomY) {
+            val dy = (minBottomY - toggleMusic.y)
+            toggleSfx.y += dy
+            toggleMusic.y += dy
+        }
     }
 
     override fun render(delta: Float) {
@@ -209,8 +254,25 @@ class MainMenuScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         labelCentered(btnInfo, "Информация")
         labelCentered(btnExit, "Выход")
 
+        // Тумблеры
+        fun drawToggle(r: Rectangle, label: String, on: Boolean) {
+            batch.end()
+            shapes.begin(ShapeRenderer.ShapeType.Filled)
+            shapes.color = if (on) Color(0.10f, 0.45f, 0.22f, 0.78f) else Color(0.12f, 0.12f, 0.16f, 0.78f)
+            shapes.rect(r.x, r.y, r.width, r.height)
+            shapes.end()
+            batch.begin()
+
+            glyph.setText(font, "$label: ${if (on) "ВКЛ" else "ВЫКЛ"}", Color.WHITE, r.width, Align.center, false)
+            val y = r.y + r.height / 2f + glyph.height / 2f
+            font.color = Color.WHITE
+            font.draw(batch, glyph, r.x, y)
+        }
+        drawToggle(toggleSfx, "Звук", Audio.enabled)
+        drawToggle(toggleMusic, "Музыка", Bgm.enabled)
+
         // Подпись снизу
-        val version = "v0.1 демо"
+        val version = "v0.2 демо"
         glyph.setText(font, version)
         font.color = Color(1f, 1f, 1f, 0.55f)
         // Рисуем по baseline, чтобы текст полностью был видим (не обрезался снизу).

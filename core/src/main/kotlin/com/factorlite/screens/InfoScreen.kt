@@ -18,6 +18,7 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport
 import com.factorlite.FactorLiteGame
 import com.factorlite.loot.ItemKind
 import com.factorlite.loot.Rarity
+import com.factorlite.loot.fixedRarity
 import com.factorlite.loot.makeItemOption
 import com.factorlite.loot.uiName as lootUiName
 import com.factorlite.progression.CharacterKind
@@ -25,6 +26,7 @@ import com.factorlite.progression.WeaponKind
 import com.factorlite.progression.isMagic
 import com.factorlite.progression.uiName
 import com.factorlite.util.CrashLog
+import com.factorlite.audio.Audio
 
 class InfoScreen(private val game: FactorLiteGame) : ScreenAdapter() {
     private enum class Tab { CHARACTERS, WEAPONS, ITEMS }
@@ -58,13 +60,14 @@ class InfoScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             try {
                 val ui = unproject(screenX, screenY)
                 if (btnBack.contains(ui)) {
+                    Audio.uiClick()
                     game.setScreen(MainMenuScreen(game))
                     return true
                 }
                 when {
-                    tabChars.contains(ui) -> { tab = Tab.CHARACTERS; resetScroll(); return true }
-                    tabWeapons.contains(ui) -> { tab = Tab.WEAPONS; resetScroll(); return true }
-                    tabItems.contains(ui) -> { tab = Tab.ITEMS; resetScroll(); return true }
+                    tabChars.contains(ui) -> { Audio.uiClick(); tab = Tab.CHARACTERS; resetScroll(); return true }
+                    tabWeapons.contains(ui) -> { Audio.uiClick(); tab = Tab.WEAPONS; resetScroll(); return true }
+                    tabItems.contains(ui) -> { Audio.uiClick(); tab = Tab.ITEMS; resetScroll(); return true }
                 }
                 if (contentRect.contains(ui)) {
                     dragging = true
@@ -144,7 +147,7 @@ class InfoScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 this.size = size
                 color = Color.WHITE
                 characters = FreeTypeFontGenerator.DEFAULT_CHARS +
-                    "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»"
+                    "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»→"
             }
             font = gen.generateFont(param)
         } finally {
@@ -229,11 +232,9 @@ class InfoScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 append("Предметы из сундуков:\n\n")
                 for (k in ItemKind.entries) {
                     append("- ").append(k.lootUiName).append('\n')
-                    append("  Описание (по редкости):\n")
-                    for (r in Rarity.entries) {
-                        val opt = makeItemOption(com.factorlite.loot.ItemInstance(k, r))
-                        append("  - ").append(r.lootUiName).append(": ").append(opt.description).append('\n')
-                    }
+                    val opt = makeItemOption(com.factorlite.loot.ItemInstance(k, k.fixedRarity))
+                    append("  Редкость: ").append(k.fixedRarity.lootUiName).append('\n')
+                    append("  ").append(opt.description).append('\n')
                     append('\n')
                 }
             }
@@ -326,7 +327,15 @@ class InfoScreen(private val game: FactorLiteGame) : ScreenAdapter() {
 
         // hint
         font.color = Color(1f, 1f, 1f, 0.55f)
-        font.draw(batch, "Колёсико мыши / свайп — скролл", contentRect.x, contentRect.y - 10f * s)
+        // Не рисуем подсказку "впритык" к кнопке "Назад", иначе на некоторых Android-экранах
+        // (особенно с большой плотностью пикселей) она визуально наезжает/обрезается.
+        val hint = if (Gdx.app.type == com.badlogic.gdx.Application.ApplicationType.Android) {
+            "Свайп — скролл"
+        } else {
+            "Колёсико мыши / свайп — скролл"
+        }
+        glyph.setText(font, hint)
+        font.draw(batch, glyph, contentRect.x, btnBack.y + btnBack.height + 10f * s + glyph.height)
 
         batch.end()
     }

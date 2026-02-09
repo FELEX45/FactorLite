@@ -39,6 +39,9 @@ import com.factorlite.screens.RunUiSystem
 import com.factorlite.content.Balance
 import com.factorlite.gfx.Sprites
 import com.factorlite.FactorLiteGame
+import com.factorlite.audio.Audio
+import com.factorlite.audio.AudioSettings
+import com.factorlite.audio.Bgm
 import com.factorlite.progression.GlobalBonusOption
 import com.factorlite.progression.CharacterKind
 import com.factorlite.progression.playerSpriteKey
@@ -154,6 +157,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
     private lateinit var pauseInput: InputAdapter
     private val pauseContinueRect = Rectangle()
     private val pauseMenuRect = Rectangle()
+    private val pauseSfxRect = Rectangle()
+    private val pauseMusicRect = Rectangle()
 
     private var pendingShrineChoices: List<GlobalBonusOption> = emptyList()
     private val items = ArrayList<ItemInstance>()
@@ -212,12 +217,16 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
     private val damageNumbers: MutableList<DamageNumberFx> = ArrayList()
 
     private fun spawnDamageNumber(x: Float, y: Float, dmg: Float, crit: Boolean = false) {
-        val v = dmg.toInt().coerceAtLeast(1)
-        val ox = MathUtils.random(-6f, 6f)
-        val oy = MathUtils.random(0f, 10f)
         val r = if (crit) 1.0f else 1.0f
         val g = if (crit) 0.86f else 1.0f
         val b = if (crit) 0.25f else 1.0f
+        spawnDamageNumberTint(x, y, dmg, r, g, b)
+    }
+
+    private fun spawnDamageNumberTint(x: Float, y: Float, dmg: Float, r: Float, g: Float, b: Float) {
+        val v = dmg.toInt().coerceAtLeast(1)
+        val ox = MathUtils.random(-6f, 6f)
+        val oy = MathUtils.random(0f, 10f)
         damageNumbers.add(
             DamageNumberFx(
                 x = x + ox,
@@ -236,9 +245,71 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
     }
 
+    private fun accDotDamageNumber(enemy: Enemy, dmg: Float, r: Float, g: Float, b: Float) {
+        if (dmg <= 0.001f) return
+        val key = System.identityHashCode(enemy)
+        val st = dotNum.getOrPut(key) {
+            DotNumState(
+                acc = 0f,
+                timer = 0f,
+                x = enemy.pos.x,
+                y = enemy.pos.y,
+                radius = enemy.radius,
+                r = r,
+                g = g,
+                b = b,
+            )
+        }
+        st.acc += dmg
+        st.x = enemy.pos.x
+        st.y = enemy.pos.y
+        st.radius = enemy.radius
+        st.r = r
+        st.g = g
+        st.b = b
+
+        // Для DOT не спамим каждый тик: показываем раз в ~0.25s суммарный урон.
+        if (st.timer <= 0f) st.timer = 0.25f
+    }
+
+    private fun updateDotDamageNumbers(delta: Float) {
+        if (dotNum.isEmpty()) return
+        val it = dotNum.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            val st = e.value
+            st.timer -= delta
+            if (st.timer > 0f) continue
+
+            if (st.acc > 0.001f) {
+                // DOT: показываем редко и зелёным (яд)
+                spawnDamageNumberTint(st.x, st.y + st.radius + 8f, st.acc, st.r, st.g, st.b)
+                st.acc = 0f
+            } else {
+                it.remove()
+            }
+        }
+    }
+
     // Простая арена (пока) — под портретное окно.
     private val arenaHalfW = 520f
     private val arenaHalfH = 920f
+
+    // SFX throttles
+    private var killSfxCooldown = 0f
+    private var playerHitSfxCooldown = 0f
+
+    private data class DotNumState(
+        var acc: Float,
+        var timer: Float,
+        var x: Float,
+        var y: Float,
+        var radius: Float,
+        var r: Float,
+        var g: Float,
+        var b: Float,
+    )
+    private val dotNum: MutableMap<Int, DotNumState> = HashMap()
 
     override fun show() {
         // setScreen(...) может произойти до первого resize(), поэтому обновим вьюпорты вручную.
@@ -291,24 +362,49 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                     layoutPauseMenu()
                     if (pauseContinueRect.contains(tmpVec.x, tmpVec.y)) {
                         if (runState == RunState.PAUSED) {
+                            Audio.uiClick()
+                            Audio.resume()
                             runState = RunState.RUNNING
                         } else {
+                            Audio.uiClick()
                             // Победа/поражение: рестарт за того же персонажа/сложность
                             resetRun()
                         }
                         return true
                     }
                     if (pauseMenuRect.contains(tmpVec.x, tmpVec.y)) {
+                        Audio.uiClick()
                         // Безопасно переключаем экран после обработки ввода.
                         Gdx.app.postRunnable {
                             game.setScreen(MainMenuScreen(game))
                         }
                         return true
                     }
+                    if (pauseSfxRect.contains(tmpVec.x, tmpVec.y)) {
+                        val was = Audio.enabled
+                        Audio.enabled = !Audio.enabled
+                        AudioSettings.save()
+                        if (!was && Audio.enabled) Audio.uiClick()
+                        return true
+                    }
+                    if (pauseMusicRect.contains(tmpVec.x, tmpVec.y)) {
+                        val was = Bgm.enabled
+                        Bgm.enabled = !Bgm.enabled
+                        Bgm.applySettings()
+                        AudioSettings.save()
+                        if (!was && Bgm.enabled) Audio.uiClick()
+                        return true
+                    }
                 }
 
                 if (pauseRect.contains(tmpVec.x, tmpVec.y)) {
-                    runState = if (runState == RunState.RUNNING) RunState.PAUSED else RunState.RUNNING
+                    runState = if (runState == RunState.RUNNING) {
+                        Audio.pause()
+                        RunState.PAUSED
+                    } else {
+                        Audio.resume()
+                        RunState.RUNNING
+                    }
                     return true
                 }
                 return false
@@ -348,6 +444,12 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         val topY = h / 2f + (bh + gap) * 0.5f
         pauseContinueRect.set(cx - bw / 2f, topY, bw, bh)
         pauseMenuRect.set(cx - bw / 2f, topY - (bh + gap), bw, bh)
+
+        val th = (52f * s).coerceIn(40f * s, 64f * s)
+        val tw = (bw * 0.49f).coerceAtLeast(200f * s)
+        val ty = pauseMenuRect.y - (th + 14f * s)
+        pauseSfxRect.set(cx - tw - 10f * s, ty, tw, th)
+        pauseMusicRect.set(cx + 10f * s, ty, tw, th)
     }
 
     private fun drawPauseMenuOverlay() {
@@ -368,6 +470,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
         btn(pauseContinueRect, Color(0.10f, 0.45f, 0.22f, 0.92f))
         btn(pauseMenuRect, Color(0.12f, 0.12f, 0.16f, 0.92f))
+        btn(pauseSfxRect, if (Audio.enabled) Color(0.10f, 0.45f, 0.22f, 0.78f) else Color(0.12f, 0.12f, 0.16f, 0.78f))
+        btn(pauseMusicRect, if (Bgm.enabled) Color(0.10f, 0.45f, 0.22f, 0.78f) else Color(0.12f, 0.12f, 0.16f, 0.78f))
         shapes.end()
 
         batch.begin()
@@ -387,6 +491,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
         labelCentered(pauseContinueRect, "Продолжить")
         labelCentered(pauseMenuRect, "В главное меню")
+        labelCentered(pauseSfxRect, "Звук: ${if (Audio.enabled) "ВКЛ" else "ВЫКЛ"}")
+        labelCentered(pauseMusicRect, "Музыка: ${if (Bgm.enabled) "ВКЛ" else "ВЫКЛ"}")
         font.data.setScale(baseX, baseY)
     }
 
@@ -408,6 +514,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
         btn(pauseContinueRect, Color(0.10f, 0.45f, 0.22f, 0.92f))
         btn(pauseMenuRect, Color(0.12f, 0.12f, 0.16f, 0.92f))
+        btn(pauseSfxRect, if (Audio.enabled) Color(0.10f, 0.45f, 0.22f, 0.78f) else Color(0.12f, 0.12f, 0.16f, 0.78f))
+        btn(pauseMusicRect, if (Bgm.enabled) Color(0.10f, 0.45f, 0.22f, 0.78f) else Color(0.12f, 0.12f, 0.16f, 0.78f))
         shapes.end()
 
         batch.begin()
@@ -427,6 +535,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
         labelCentered(pauseContinueRect, "Начать ещё раз")
         labelCentered(pauseMenuRect, "В главное меню")
+        labelCentered(pauseSfxRect, "Звук: ${if (Audio.enabled) "ВКЛ" else "ВЫКЛ"}")
+        labelCentered(pauseMusicRect, "Музыка: ${if (Bgm.enabled) "ВКЛ" else "ВЫКЛ"}")
 
         font.data.setScale(baseX, baseY)
     }
@@ -803,8 +913,15 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
 
     private fun update(delta: Float) {
         runTime += delta
-        itemSystem.update(delta)
+        // Предметы могут добавлять XP (например "Книга")
+        var leveledFromItems = false
+        itemSystem.update(delta) { gainedXp ->
+            if (progression.addXp(gainedXp)) leveledFromItems = true
+        }
         playerDamage.update(delta)
+        killSfxCooldown = max(0f, killSfxCooldown - delta)
+        playerHitSfxCooldown = max(0f, playerHitSfxCooldown - delta)
+        updateDotDamageNumbers(delta)
         // FX ближней атаки
         if (meleeFx.isNotEmpty()) {
             val it = meleeFx.iterator()
@@ -825,8 +942,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 if (fx.timeLeft <= 0f) it.remove()
             }
         }
-        // Кольцо жизненной силы: динамический max HP (обновляем каждый тик, чтобы работало сразу после выбора).
-        playerDamage.setMaxHp(baseMaxHp * progression.getMaxHpMultiplier())
+        // Динамический max HP: кольца + предмет "Сердце" (+20 за штуку).
+        playerDamage.setMaxHp(baseMaxHp * progression.getMaxHpMultiplier() + itemSystem.getMaxHpFlatBonus())
 
         // 5 минут -> босс уровня (останавливаем обычные волны)
         if (!bossSpawned && runTime >= runDurationSec) {
@@ -835,7 +952,7 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
 
         // joystick.direction сейчас в screen-space, Y у libGDX для touch идёт сверху вниз
         // Поэтому инвертируем Y.
-        val playerSpeed = basePlayerSpeed * progression.getMoveSpeedMultiplier()
+        val playerSpeed = basePlayerSpeed * progression.getMoveSpeedMultiplier() * itemSystem.getMoveSpeedMultiplier()
         playerVel.set(joystick.direction.x, -joystick.direction.y).scl(playerSpeed)
         playerPos.mulAdd(playerVel, delta)
 
@@ -877,7 +994,7 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         }
         val easyBonus = if (selectedDifficulty == DifficultyKind.EASY) 2f else 1f
         val leveledUp = loot.updateXpOrbs(delta, playerPos, progression, xpMul = easyBonus)
-        loot.updateGoldOrbs(delta, playerPos, progression, goldMul = easyBonus)
+        loot.updateGoldOrbs(delta, playerPos, progression, goldMul = easyBonus * itemSystem.getGoldGainMultiplier())
         updateEnemyStatusesAndDots(delta)
         updatePoisonTraps(delta)
         itemSystem.applyToxicDamage(
@@ -890,14 +1007,21 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             enemies = enemies,
             isAlive = { it.hp > 0f },
             getPos = { it.pos },
-            damageEnemy = { e, dmg -> e.hp -= dmg },
+            damageEnemy = { e, dmg ->
+                e.hp -= dmg
+                accDotDamageNumber(e, dmg, r = 0.35f, g = 0.95f, b = 0.45f)
+            },
         )
         applyContactDamage()
         updateEnemyProjectiles(delta)
-        loot.tryOpenChestByProximity(playerPos)?.let { res ->
+        loot.tryOpenChestByProximity(playerPos, luckBonus = itemSystem.getLuckBonus())?.let { res ->
             // Сундук теперь сразу выдаёт рандомный предмет (без UI выбора)
             items.add(res.item)
             itemSystem.addItem(res.item)
+            Audio.chestOpen()
+            if (res.item.kind == com.factorlite.loot.ItemKind.HEART) {
+                playerDamage.heal(20f)
+            }
         }
 
         // Камера следует за игроком
@@ -922,10 +1046,11 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
         updateProjectiles(delta)
         cleanupDead()
 
-        if (leveledUp && runState == RunState.RUNNING) {
+        if ((leveledUp || leveledFromItems) && runState == RunState.RUNNING) {
             pendingChoices = progression.makeUpgradeChoices()
             runState = RunState.LEVEL_UP
             uiSystem.layoutCards(uiViewport, optionCount = pendingChoices.size, withSkip = false, uiScale = uiScale)
+            Audio.levelUp()
         }
     }
 
@@ -1009,6 +1134,7 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 val dy = e.pos.y - t.pos.y
                 if (dx * dx + dy * dy <= r2) {
                     e.hp -= dmg
+                    accDotDamageNumber(e, dmg, r = 0.35f, g = 0.95f, b = 0.45f)
                     if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
                     // Лёгкий слоу пока стоишь в облаке
                     if (t.slowPct > 0f) {
@@ -1274,8 +1400,13 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             canDamagePlayer = playerDamage.canTakeDamage(),
             onHitPlayer = { dmg ->
                 val res = playerDamage.applyHit(dmg * selectedDifficulty.enemyDamageMul, itemSystem, dodgeChance = progression.getDodgeChance())
+                if (!res.blocked && playerHitSfxCooldown <= 0f) {
+                    Audio.playerHit()
+                    playerHitSfxCooldown = 0.10f
+                }
                 if (res.died) {
                     runState = RunState.GAME_OVER
+                    Audio.gameOver()
                 }
                 !res.blocked
             },
@@ -1291,8 +1422,13 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             val r = e.radius + playerRadius
             if (dx * dx + dy * dy <= r * r) {
                 val res = playerDamage.applyHit(e.contactDamage, itemSystem, dodgeChance = progression.getDodgeChance())
+                if (!res.blocked && playerHitSfxCooldown <= 0f) {
+                    Audio.playerHit()
+                    playerHitSfxCooldown = 0.10f
+                }
                 if (res.died) {
                     runState = RunState.GAME_OVER
+                    Audio.gameOver()
                 }
                 return
             }
@@ -1361,6 +1497,7 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             val dy = e.pos.y - playerPos.y
             if (dx * dx + dy * dy <= r2) {
                 e.hp -= dmg
+                accDotDamageNumber(e, dmg, r = 0.35f, g = 0.95f, b = 0.45f)
                 if (lifesteal > 0f) playerDamage.heal(dmg * lifesteal)
                 // лёгкий слоу пока в ауре
                 val mul = (1f - slowPct).coerceIn(0.35f, 1f)
@@ -1698,6 +1835,10 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
             if (e.hp <= 0f) {
                 killedEnemies += 1
                 if (e.isBoss) bossDied = true
+                if (!e.isBoss && killSfxCooldown <= 0f) {
+                    Audio.kill()
+                    killSfxCooldown = 0.05f
+                }
                 loot.onEnemyKilled(
                     pos = e.pos,
                     xpReward = e.xpReward,
@@ -1708,11 +1849,16 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 // Бургер — хил на убийство
                 val heal = itemSystem.rollBurgerHeal()
                 if (heal > 0f) playerDamage.heal(heal)
+
+                // Клык волка — шанс хила на убийство
+                val heal2 = itemSystem.rollWolfFangHeal()
+                if (heal2 > 0f) playerDamage.heal(heal2)
             }
         }
         enemies.removeAll { it.hp <= 0f }
         if (bossDied) {
             runState = RunState.VICTORY
+            Audio.victory()
         }
         // Цель чистится внутри TargetingSystem на апдейте
     }
@@ -2104,7 +2250,8 @@ class GameScreen(private val game: FactorLiteGame) : ScreenAdapter() {
                 this.size = size
                 color = Color.WHITE
                 // Кириллица + базовый латинский набор
-                characters = FreeTypeFontGenerator.DEFAULT_CHARS + "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»"
+                // + "→" для строк апгрейдов вида "0 → 1" (иначе рисуется квадратик).
+                characters = FreeTypeFontGenerator.DEFAULT_CHARS + "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя№—«»→"
             }
             font = gen.generateFont(param)
         } finally {
